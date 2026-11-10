@@ -1,0 +1,86 @@
+import type { Request, Response } from "express";
+import type { Database } from "../../../infrastructure/database/db.js";
+import type { Guards } from "../../auth/index.js";
+import * as attributes from "../services/attributes.service.js";
+import * as catalog from "../services/catalog.service.js";
+import * as prices from "../services/prices.service.js";
+
+type IdParam = Request<{ id: string }>;
+
+export function createCatalogController(database: Database, guards: Guards) {
+  return {
+    async publicCatalog(_request: Request, response: Response) {
+      response.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+      response.json(await catalog.listCatalog(database));
+    },
+
+    async latestPrices(_request: Request, response: Response) {
+      response.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+      response.json(await prices.latestPrices(database));
+    },
+
+    async staffCatalog(request: Request, response: Response) {
+      await guards.requirePermission(request, response, "catalog.manage");
+      response.json(await catalog.listCatalog(database, { staff: true }));
+    },
+
+    async createProduct(request: Request, response: Response) {
+      const { adminId } = await guards.requirePermission(request, response, "catalog.manage");
+      response.status(201).json(await catalog.createProduct(database, adminId, request.body ?? {}));
+    },
+
+    async updateProduct(request: IdParam, response: Response) {
+      const { adminId } = await guards.requirePermission(request, response, "catalog.manage");
+      response.json(
+        await catalog.updateProduct(database, adminId, request.params.id, request.body ?? {}),
+      );
+    },
+
+    async deleteProduct(request: IdParam, response: Response) {
+      const { adminId } = await guards.requirePermission(request, response, "catalog.manage");
+      response.json(await catalog.deleteProduct(database, adminId, request.params.id));
+    },
+
+    async attributes(request: Request, response: Response) {
+      await guards.requirePermission(request, response, "catalog.manage");
+      response.json(await attributes.listAttributes(database));
+    },
+
+    async createAttribute(request: Request, response: Response) {
+      const { adminId } = await guards.requirePermission(request, response, "catalog.manage");
+      response.status(201).json(await attributes.createAttribute(database, adminId, request.body ?? {}));
+    },
+
+    async deleteAttribute(request: IdParam, response: Response) {
+      const { adminId } = await guards.requirePermission(request, response, "catalog.manage");
+      response.json(await attributes.deleteAttribute(database, adminId, request.params.id));
+    },
+
+    async createValue(request: IdParam, response: Response) {
+      const { adminId } = await guards.requirePermission(request, response, "catalog.manage");
+      response
+        .status(201)
+        .json(await attributes.createValue(database, adminId, request.params.id, request.body ?? {}));
+    },
+
+    async deleteValue(request: IdParam, response: Response) {
+      const { adminId } = await guards.requirePermission(request, response, "catalog.manage");
+      response.json(await attributes.deleteValue(database, adminId, request.params.id));
+    },
+
+    async prices(request: Request, response: Response) {
+      await guards.requirePermission(request, response, "catalog.manage");
+      response.json(await prices.listPrices(database));
+    },
+
+    async createPrice(request: Request, response: Response) {
+      const { adminId } = await guards.requirePermission(request, response, "catalog.manage");
+      response.status(201).json(await prices.createPrice(database, adminId, request.body ?? {}));
+    },
+
+    async deletePrice(request: IdParam, response: Response) {
+      const { adminId } = await guards.requirePermission(request, response, "catalog.manage");
+      response.json(await prices.deletePrice(database, adminId, request.params.id));
+    },
+  };
+}

@@ -1,0 +1,41 @@
+{
+  "name": "ankuaru-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "admin:grant": "tsx src/cli/grant-admin.ts",
+    "admin:seed": "tsx src/cli/seed-system-admin.ts",
+    "admin:reset-password": "tsx src/cli/reset-system-admin-password.ts",
+    "client:seed": "tsx src/cli/seed-client.ts",
+    "client:reset-password": "tsx src/cli/reset-client-password.ts",
+    "client:seed-content": "tsx src/cli/seed-client-content.ts",
+    "prices:seed-sample": "tsx src/cli/seed-sample-prices.ts",
+    "staff:seed": "tsx src/cli/seed-staff.ts",
+    "db:generate": "drizzle-kit generate",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.45.4",
+    "express": "^5.1.0",
+    "pg": "^8.23.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.11",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.16.5",
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.11",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
