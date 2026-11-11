@@ -167,7 +167,12 @@ GET/PATCH /api/admin/verifications  Verification queue, pending first (paged)
 GET/PATCH /api/admin/inquiries      Privacy-safe inquiry oversight, no message bodies (paged)
 GET/PATCH /api/admin/settings       Persisted marketplace settings
 GET/POST /api/kyc                   Read or submit individual/business verification
-GET    /api/content/news            Published posts for the public journal
+GET    /api/content/news            Published news; ?limit=1..100&cursor= (paged)
+GET    /api/content/news/:id        One published news story
+GET    /api/content/tenders         Published tenders; ?limit=1..100&cursor= (paged)
+GET    /api/content/tenders/:id     One published tender
+GET    /api/content/events          Published events; ?limit=1..100&cursor= (paged)
+GET    /api/content/events/:id      One published event
 GET/POST/PATCH /api/content/admin/posts        Admin post creation and publishing
 GET/POST /api/content/admin/exchange-rates     Admin exchange-rate history
 GET    /api/admin/users             Accounts; ?q= (name or email), ?account_role=, ?status= (paged)

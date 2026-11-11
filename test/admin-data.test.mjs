@@ -206,10 +206,11 @@ test("public news, tender and event feeds support validated limits", async (t) =
     ["Tender", "/content/tenders"],
     ["Event", "/content/events"],
   ];
+  const publishedIds = new Map();
 
   for (const [kind] of kinds) {
     for (let index = 0; index < 2; index += 1) {
-      await json(
+      const post = await json(
         await call(base, "/content/admin/posts", {
           method: "POST",
           headers: editor.headers,
@@ -225,10 +226,11 @@ test("public news, tender and event feeds support validated limits", async (t) =
         }),
         201,
       );
+      if (index === 0) publishedIds.set(kind, post.id);
     }
   }
 
-  for (const [, path] of kinds) {
+  for (const [kind, path] of kinds) {
     const firstPageResponse = await call(base, `${path}?limit=1`);
     const firstPage = await json(firstPageResponse, 200);
     assert.equal(firstPage.length, 1);
@@ -241,6 +243,14 @@ test("public news, tender and event feeds support validated limits", async (t) =
     assert.equal(secondPage.length, 1);
     assert.notEqual(firstPage[0].id, secondPage[0].id);
     assert.equal((await json(await call(base, path), 200)).length, 2);
+    const detail = await json(
+      await call(base, `${path}/${publishedIds.get(kind)}`),
+      200,
+    );
+    assert.equal(detail.kind, kind);
+    const wrongKindPath =
+      kind === "News" ? "/content/events" : kind === "Event" ? "/content/news" : "/content/events";
+    await json(await call(base, `${wrongKindPath}/${publishedIds.get(kind)}`), 404);
     await json(await call(base, `${path}?limit=101`), 400);
     await json(await call(base, `${path}?limit=invalid`), 400);
   }
