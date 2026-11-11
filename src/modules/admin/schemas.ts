@@ -19,6 +19,7 @@ export const userFiltersSchema = z.object({
     .trim()
     .pipe(z.enum(["Active", "Pending", "Suspended"]))
     .optional(),
+  profile: z.string().trim().pipe(z.literal("unclaimed")).optional(),
 });
 
 export const adminGrantSchema = z.object({

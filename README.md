@@ -111,6 +111,26 @@ The SMS gateway receives a JSON POST with `to`, `message`, and optional
 `sender_id` fields. Local development without a gateway returns a development
 code to the client; this behavior is disabled outside development/test.
 
+### Legacy marketplace import
+
+After configuring `DATABASE_URL`, run `npm run legacy:import` from `backend/`
+to import offers and news created on or after `LEGACY_IMPORT_SINCE` (defaults to
+`2026-10-01T00:00:00+03:00`). `LEGACY_NEWS_SINCE` can set a different cutoff for
+news only. `LEGACY_API_BASE_URL` can override the source API
+base URL. News is read from `UserService/fetchnewsdetails` and published as
+ANKUARU posts; Telegraph article text is used for the body when the source URL
+is a `telegra.ph` page. The importer validates every source response before
+writing and can be rerun safely: it adds unseen records without replacing
+profiles, listings, news posts, or activity already present on this site.
+
+Imported profiles keep their source IDs and are not identity-verified. A
+profile can be claimed only by registering with the same unambiguous phone
+number and completing this site's phone OTP verification. Passwords, sessions,
+and administrator roles are never imported. Source-active, non-hidden offers
+are visible on the marketplace while inactive or hidden offers remain closed.
+Inquiry and account-management actions remain unavailable until the owner
+claims the profile and completes the site's verification requirements.
+
 The frontend reads `VITE_API_URL` (default `http://localhost:4000`). The API
 allows browser requests from any origin; protected endpoints still require
 authentication. For an Expo-hosted preview, set `VITE_API_URL` to a publicly

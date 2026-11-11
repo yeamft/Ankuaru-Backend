@@ -14,6 +14,7 @@
     "client:seed-content": "tsx src/cli/seed-client-content.ts",
     "prices:seed-sample": "tsx src/cli/seed-sample-prices.ts",
     "staff:seed": "tsx src/cli/seed-staff.ts",
+    "legacy:import": "tsx src/cli/import-legacy.ts",
     "db:generate": "drizzle-kit generate",
     "test": "npm run build && node --test test/*.test.mjs"
   },

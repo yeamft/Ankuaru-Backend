@@ -124,9 +124,11 @@ export async function listLiveListings(
         filters.category ? eq(listings.category, filters.category) : undefined,
         filters.search ? searchCondition(filters.search) : undefined,
         sql`${listings.status} in ('Active', 'Closing Soon')`,
-        eq(traders.verified, true),
-        eq(traders.phoneVerified, true),
         eq(traders.status, "Active"),
+        or(
+          and(eq(traders.verified, true), eq(traders.phoneVerified, true)),
+          eq(listings.source, "legacy-ankuaru"),
+        ),
         sql`case when ${listings.intent} = 'buy' then ${traders.role} in ('buyer', 'both') else ${traders.role} in ('seller', 'both') end`,
         cursor
           ? or(
@@ -157,9 +159,11 @@ export async function findLiveListing(database: Database, listingId: string) {
       and(
         eq(listings.id, listingId),
         sql`${listings.status} in ('Active', 'Closing Soon')`,
-        eq(traders.verified, true),
-        eq(traders.phoneVerified, true),
         eq(traders.status, "Active"),
+        or(
+          and(eq(traders.verified, true), eq(traders.phoneVerified, true)),
+          eq(listings.source, "legacy-ankuaru"),
+        ),
         sql`case when ${listings.intent} = 'buy' then ${traders.role} in ('buyer', 'both') else ${traders.role} in ('seller', 'both') end`,
       ),
     );

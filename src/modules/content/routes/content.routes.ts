@@ -9,6 +9,11 @@ export function createContentRoutes(database: Database, guards: Guards): Router 
   const controller = createContentController(database, guards);
 
   router.get("/news", controller.publicNews);
+  router.get("/news/:id", controller.publicNewsItem);
+  router.get("/tenders", controller.publicTenders);
+  router.get("/tenders/:id", controller.publicTenderItem);
+  router.get("/events", controller.publicEvents);
+  router.get("/events/:id", controller.publicEventItem);
   router.post("/news/:id/events", controller.newsEvent);
   router.get("/resources", controller.publicResources);
   router.get("/admin/posts", controller.posts);

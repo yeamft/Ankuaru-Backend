@@ -152,6 +152,11 @@ export function createAdminController(database: Database, guards: Guards, access
       await guards.requirePermission(request, response, "users.manage");
       const page = pageRequest(request, 2);
       const filters = users.userFilters(request.query as Record<string, unknown>);
+      if (filters.profile === "unclaimed") {
+        const summary = await users.unclaimedProfileSummary(database);
+        response.set("X-Total-Count", String(summary.profiles));
+        response.set("X-Listings-Count", String(summary.listings));
+      }
       sendPage(response, await users.listUsers(database, filters, page), page);
     },
 

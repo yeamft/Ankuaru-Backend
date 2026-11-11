@@ -64,7 +64,7 @@ export function createApp(options: AppOptions) {
   app.use(
     cors({
       origin: corsOrigin(),
-      exposedHeaders: ["X-Next-Cursor"],
+      exposedHeaders: ["X-Next-Cursor", "X-Total-Count", "X-Listings-Count"],
       maxAge: 600,
     }),
   );

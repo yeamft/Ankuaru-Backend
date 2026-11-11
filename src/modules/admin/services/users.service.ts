@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, ilike, lt, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import type { Database } from "../../../infrastructure/database/db.js";
 import type { DatabaseTransaction } from "../../../infrastructure/database/transaction.js";
 import { transaction } from "../../../infrastructure/database/index.js";
 import {
   accounts,
   accountSessions,
+  legacyUsers,
   listings,
   traders,
 } from "../../../infrastructure/database/schema.js";
@@ -21,6 +22,7 @@ export type UserFilters = {
   /** One role, or "staff" for every role except "user". */
   accountRole: AccountRole | "staff" | null;
   status: "Active" | "Pending" | "Suspended" | null;
+  profile: "unclaimed" | null;
 };
 
 /** Escapes LIKE wildcards so a search for "100%" matches the text itself. */
@@ -51,31 +53,38 @@ export async function listUsers(database: Database, filters: UserFilters, page: 
   const counts = activeCounts(database);
   const signIns = lastSignIns(database);
   const cursor = page.after;
+  const joinedAt = sql<Date>`coalesce(${accounts.createdAt}, ${traders.createdAt})`;
   return database
     .select({
-      id: accounts.id,
+      id: traders.id,
       email: accounts.email,
       account_role: accounts.accountRole,
+      has_account: sql<boolean>`${accounts.id} is not null`,
       display_name: traders.displayName,
       role: traders.role,
       verified: traders.verified,
       status: traders.status,
-      created_at: accounts.createdAt,
+      created_at: joinedAt,
       active_listings: sql<number>`coalesce(${counts.count}, 0)`,
       last_sign_in_at: signIns.lastSignIn,
-      _k0: sql<string>`${accounts.createdAt}::text`,
-      _k1: accounts.id,
+      _k0: sql<string>`${joinedAt}::text`,
+      _k1: traders.id,
     })
-    .from(accounts)
-    .innerJoin(traders, eq(traders.id, accounts.id))
-    .leftJoin(counts, eq(counts.ownerId, accounts.id))
+    .from(traders)
+    .leftJoin(accounts, eq(accounts.id, traders.id))
+    .leftJoin(legacyUsers, eq(legacyUsers.traderId, traders.id))
+    .leftJoin(counts, eq(counts.ownerId, traders.id))
     .leftJoin(signIns, eq(signIns.accountId, accounts.id))
     .where(
       and(
+        filters.profile === "unclaimed"
+          ? and(isNotNull(legacyUsers.sourceId), isNull(accounts.id))
+          : isNotNull(accounts.id),
         filters.query
           ? or(
               ilike(accounts.email, likePattern(filters.query)),
               ilike(traders.displayName, likePattern(filters.query)),
+              ilike(traders.businessName, likePattern(filters.query)),
             )
           : undefined,
         filters.accountRole === "staff"
@@ -86,14 +95,31 @@ export async function listUsers(database: Database, filters: UserFilters, page: 
         filters.status ? eq(traders.status, filters.status) : undefined,
         cursor
           ? or(
-              lt(accounts.createdAt, new Date(cursor[0])),
-              and(eq(accounts.createdAt, new Date(cursor[0])), lt(accounts.id, cursor[1])),
+              lt(joinedAt, new Date(cursor[0])),
+              and(eq(joinedAt, new Date(cursor[0])), lt(traders.id, cursor[1])),
             )
           : undefined,
       ),
     )
-    .orderBy(desc(accounts.createdAt), desc(accounts.id))
+    .orderBy(desc(joinedAt), desc(traders.id))
     .limit(page.limit + 1);
+}
+
+export async function unclaimedProfileSummary(database: Database) {
+  const [summary] = await database
+    .select({
+      profiles: sql<number>`count(distinct ${legacyUsers.sourceId})::int`,
+      listings: sql<number>`count(${listings.id})::int`,
+    })
+    .from(legacyUsers)
+    .innerJoin(traders, eq(traders.id, legacyUsers.traderId))
+    .leftJoin(accounts, eq(accounts.id, traders.id))
+    .leftJoin(listings, and(
+      eq(listings.ownerId, traders.id),
+      sql`${listings.status} in ('Active', 'Closing Soon')`,
+    ))
+    .where(isNull(accounts.id));
+  return summary;
 }
 
 async function findUser(client: Database | DatabaseTransaction, userId: string) {
@@ -265,7 +291,7 @@ export async function revokeAdmin(database: Database, adminId: string, userId: s
 
 /** Reads ?q=, ?account_role= and ?status= for the users list. */
 export function userFilters(query: Record<string, unknown>): UserFilters {
-  for (const key of ["q", "account_role", "status"]) {
+  for (const key of ["q", "account_role", "status", "profile"]) {
     if (query[key] !== undefined && typeof query[key] !== "string")
       throw new ApiError(400, "invalid_query", `${key} must be a single value.`);
   }
@@ -273,6 +299,7 @@ export function userFilters(query: Record<string, unknown>): UserFilters {
     q: query.q === "" ? undefined : query.q,
     account_role: query.account_role === "" ? undefined : query.account_role,
     status: query.status === "" ? undefined : query.status,
+    profile: query.profile === "" ? undefined : query.profile,
   });
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
@@ -288,5 +315,6 @@ export function userFilters(query: Record<string, unknown>): UserFilters {
     query: q || null,
     accountRole: account_role ?? null,
     status: status ?? null,
+    profile: parsed.data.profile ?? null,
   };
 }

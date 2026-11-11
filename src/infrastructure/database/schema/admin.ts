@@ -44,6 +44,7 @@ export const newsPosts = pgTable("news_posts", {
   summary: text("summary").notNull(),
   body: text("body").notNull(),
   category: text("category").notNull(),
+  kind: text("kind").notNull().default("News"),
   source: text("source").notNull().default("ANKUARU"),
   imageUrl: text("image_url"),
   featured: boolean("featured").notNull().default(false),
@@ -54,6 +55,7 @@ export const newsPosts = pgTable("news_posts", {
   updatedAt: updatedAt(),
 }, (table) => [
   check("news_posts_category_check", sql`${table.category} in ('Market', 'Origins', 'Platform', 'Export', 'Policy')`),
+  check("news_posts_kind_check", sql`${table.kind} in ('News', 'Tender', 'Event')`),
   check("news_posts_status_check", sql`${table.status} in ('Draft', 'Published')`),
   check("news_posts_published_at_check", sql`${table.status} <> 'Published' or ${table.publishedAt} is not null`),
   index("news_posts_public_idx").on(table.status, table.publishedAt),

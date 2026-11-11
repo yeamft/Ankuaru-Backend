@@ -3,12 +3,16 @@ import { z } from "zod";
 const optionalText = (max: number) =>
   z.string().trim().max(max).nullable().optional().transform((value) => value || null);
 
+export const postKindSchema = z.enum(["News", "Tender", "Event"]);
+export type PostKind = z.infer<typeof postKindSchema>;
+
 export const newsPostSchema = z.object({
   title: z.string().trim().min(3).max(200),
   title_am: optionalText(200),
   summary: z.string().trim().min(10).max(800),
   body: z.string().trim().min(10).max(50000),
   category: z.enum(["Market", "Origins", "Platform", "Export", "Policy"]),
+  kind: postKindSchema.default("News"),
   source: z.string().trim().min(2).max(120).default("ANKUARU"),
   image_url: z.union([z.string().trim().url().max(2048), z.literal("")]).nullable().optional()
     .transform((value) => value || null),

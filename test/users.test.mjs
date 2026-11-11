@@ -3,6 +3,7 @@ import { before, beforeEach, after, test } from "node:test";
 import { call, createTestDatabase, fixture, resetDatabase } from "./helpers.mjs";
 
 let context;
+let accountNumber = 0;
 before(async () => {
   context = await createTestDatabase();
 });
@@ -13,9 +14,25 @@ const query = async (sql, values) => (await context.database.query(sql, values))
 
 /** Registers an account and returns its id and Bearer headers. */
 async function account(base, email, name = email.split("@")[0], role = "user") {
+  accountNumber += 1;
+  const phone = `+2519${String(accountNumber).padStart(8, "0")}`;
+  const otpResponse = await call(base, "/auth/phone-otp", {
+    method: "POST",
+    body: { phone },
+  });
+  assert.equal(otpResponse.status, 200, await otpResponse.clone().text());
+  const { development_code: phone_otp } = await otpResponse.json();
   const response = await call(base, "/auth/register", {
     method: "POST",
-    body: { email, password: "a-long-password-123", display_name: name, role: "both" },
+    body: {
+      email,
+      password: "a-long-password-123",
+      display_name: name,
+      city: "Addis Ababa",
+      role: "both",
+      phone,
+      phone_otp,
+    },
   });
   assert.equal(response.status, 201, await response.clone().text());
   const { user, access_token } = await response.json();
@@ -45,6 +62,7 @@ test("admins list accounts newest first, with search and filters", async (t) => 
     "created_at",
     "display_name",
     "email",
+    "has_account",
     "id",
     "last_sign_in_at",
     "role",
@@ -81,6 +99,64 @@ test("admins list accounts newest first, with search and filters", async (t) => 
   // Regular accounts cannot see the list.
   const trader = await account(base, "trader@example.com");
   assert.equal((await admin(base, "/users", trader.headers)).status, 403);
+});
+
+test("admin users shows imported profiles only after they claim an account", async (t) => {
+  const base = await fixture(t, context);
+  const root = await account(base, "root@example.com", "Root", "admin");
+  const registered = await account(base, "registered@example.com", "Registered trader");
+  await query(
+    `INSERT INTO traders
+       (id, display_name, business_name, city, role, verified, status, created_at)
+     VALUES ('legacy-trader-1', 'Alemu Coffee', 'Alemu Coffee Export', 'Hawassa',
+       'seller', false, 'Active', '2024-06-15T00:00:00Z')`,
+  );
+  await query(
+    `INSERT INTO legacy_users
+       (source_id, trader_id, claim_phone, claim_blocked, cutover_at)
+     VALUES ('legacy-user-1', 'legacy-trader-1', '+251911111111', false, now())`,
+  );
+  await query(
+    `INSERT INTO listings
+       (id, owner_id, reference, intent, category, product, status, source, source_reference)
+     VALUES ('legacy-listing-1', 'legacy-trader-1', 'LEG-000000000001', 'sell',
+       'coffee', 'export-coffee', 'Active', 'legacy-ankuaru', 'coffee:1')`,
+  );
+
+  const response = await admin(base, "/users?profile=unclaimed", root.headers);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("x-total-count"), "1");
+  assert.equal(response.headers.get("x-listings-count"), "1");
+  const rows = await response.json();
+  const imported = rows.find(({ id }) => id === "legacy-trader-1");
+  assert.ok(imported);
+  assert.equal(imported.display_name, "Alemu Coffee");
+  assert.equal(imported.email, null);
+  assert.equal(imported.account_role, null);
+  assert.equal(imported.has_account, false);
+  assert.equal(imported.last_sign_in_at, null);
+  assert.equal(imported.active_listings, 1);
+  assert.equal(imported.created_at, "2024-06-15T00:00:00.000Z");
+  assert.deepEqual(
+    (await (await admin(base, "/users?q=Alemu", root.headers)).json()).map(({ id }) => id),
+    [],
+  );
+  assert.deepEqual(
+    (await (await admin(base, "/users?account_role=user", root.headers)).json()).map(({ id }) => id),
+    [registered.id],
+  );
+
+  await query(
+    `INSERT INTO accounts (id, email, password_hash, account_role)
+     VALUES ('legacy-trader-1', 'alemu@example.com', 'test-password-hash', 'user')`,
+  );
+  assert.deepEqual(
+    (await (await admin(base, "/users?q=Alemu", root.headers)).json()).map(({ id }) => id),
+    ["legacy-trader-1"],
+  );
+  const claimed = await admin(base, "/users?profile=unclaimed", root.headers);
+  assert.equal(claimed.headers.get("x-total-count"), "0");
+  assert.deepEqual(await claimed.json(), []);
 });
 
 test("admins grant and revoke admin access, and every change is audited", async (t) => {

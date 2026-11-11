@@ -198,6 +198,54 @@ test("resources are drafted, published and only published ones are public", asyn
   );
 });
 
+test("public news, tender and event feeds support validated limits", async (t) => {
+  const base = await fixture(t, context);
+  const editor = await person({ accountRole: "content_manager" });
+  const kinds = [
+    ["News", "/content/news"],
+    ["Tender", "/content/tenders"],
+    ["Event", "/content/events"],
+  ];
+
+  for (const [kind] of kinds) {
+    for (let index = 0; index < 2; index += 1) {
+      await json(
+        await call(base, "/content/admin/posts", {
+          method: "POST",
+          headers: editor.headers,
+          body: {
+            title: `${kind} notice ${index + 1}`,
+            summary: `Published ${kind.toLowerCase()} notice summary.`,
+            body: `Details for published ${kind.toLowerCase()} notice.`,
+            category: "Market",
+            kind,
+            source: "ANKUARU",
+            status: "Published",
+          },
+        }),
+        201,
+      );
+    }
+  }
+
+  for (const [, path] of kinds) {
+    const firstPageResponse = await call(base, `${path}?limit=1`);
+    const firstPage = await json(firstPageResponse, 200);
+    assert.equal(firstPage.length, 1);
+    const cursor = firstPageResponse.headers.get("x-next-cursor");
+    assert.ok(cursor);
+    const secondPage = await json(
+      await call(base, `${path}?limit=1&cursor=${encodeURIComponent(cursor)}`),
+      200,
+    );
+    assert.equal(secondPage.length, 1);
+    assert.notEqual(firstPage[0].id, secondPage[0].id);
+    assert.equal((await json(await call(base, path), 200)).length, 2);
+    await json(await call(base, `${path}?limit=101`), 400);
+    await json(await call(base, `${path}?limit=invalid`), 400);
+  }
+});
+
 test("news views and shares are counted per post, with unique readers", async (t) => {
   const base = await fixture(t, context);
   const editor = await person({ accountRole: "content_manager" });

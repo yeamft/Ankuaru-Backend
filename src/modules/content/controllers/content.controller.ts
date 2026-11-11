@@ -1,19 +1,48 @@
 import type { Request, Response } from "express";
 import type { Database } from "../../../infrastructure/database/db.js";
+import { ApiError } from "../../../shared/errors.js";
+import { pageRequest, sendPage } from "../../../shared/pagination.js";
 import type { Guards } from "../../auth/index.js";
 import * as content from "../services/content.service.js";
+import type { PostKind } from "../schemas.js";
 import * as insights from "../services/insights.service.js";
 
+type IdParam = Request<{ id: string }>;
+
 export function createContentController(database: Database, guards: Guards) {
+  const publicPost = (kind: PostKind) => async (request: IdParam, response: Response) => {
+    const item = await content.findPublishedPost(database, kind, request.params.id);
+    if (!item) throw new ApiError(404, "content_not_found", "The requested content was not found.");
+    response.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    response.json(item);
+  };
+
   return {
-    async publicNews(_request: Request, response: Response) {
+    async publicNews(request: Request, response: Response) {
       response.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
-      response.json(await content.listPublishedNews(database));
+      const page = pageRequest(request, 3);
+      sendPage(response, await content.listPublishedNews(database, "News", page), page);
     },
+
+    async publicTenders(request: Request, response: Response) {
+      response.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+      const page = pageRequest(request, 3);
+      sendPage(response, await content.listPublishedNews(database, "Tender", page), page);
+    },
+
+    async publicEvents(request: Request, response: Response) {
+      response.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+      const page = pageRequest(request, 3);
+      sendPage(response, await content.listPublishedNews(database, "Event", page), page);
+    },
+
+    publicNewsItem: publicPost("News"),
+    publicTenderItem: publicPost("Tender"),
+    publicEventItem: publicPost("Event"),
 
     async posts(request: Request, response: Response) {
       await guards.requirePermission(request, response, "content.manage");
-      response.json(await content.listPosts(database));
+      response.json(await content.listPosts(database, request.query.kind));
     },
 
     async createPost(request: Request, response: Response) {

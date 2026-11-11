@@ -1,11 +1,12 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Database } from "../../../infrastructure/database/db.js";
 import { transaction } from "../../../infrastructure/database/index.js";
 import { exchangeRates, newsPosts } from "../../../infrastructure/database/schema.js";
 import { ApiError } from "../../../shared/errors.js";
+import type { PageRequest } from "../../../shared/pagination.js";
 import { audit } from "../../admin/services/audit.service.js";
-import { exchangeRateSchema, newsPostSchema, postStatusSchema } from "../schemas.js";
+import { exchangeRateSchema, newsPostSchema, postKindSchema, postStatusSchema, type PostKind } from "../schemas.js";
 
 const postProjection = {
   id: newsPosts.id,
@@ -14,6 +15,7 @@ const postProjection = {
   summary: newsPosts.summary,
   body: newsPosts.body,
   category: newsPosts.category,
+  kind: newsPosts.kind,
   source: newsPosts.source,
   image_url: newsPosts.imageUrl,
   featured: newsPosts.featured,
@@ -42,25 +44,85 @@ function notFound(): never {
   throw new ApiError(404, "content_not_found", "The requested content was not found.");
 }
 
-export async function listPublishedNews(database: Database) {
-  return database.select({
-    id: newsPosts.id,
-    title: newsPosts.title,
-    titleAm: newsPosts.titleAm,
-    summary: newsPosts.summary,
-    body: newsPosts.body,
-    category: newsPosts.category,
-    publishedAt: newsPosts.publishedAt,
-    source: newsPosts.source,
-    imageUrl: newsPosts.imageUrl,
-    featured: newsPosts.featured,
-  }).from(newsPosts)
-    .where(eq(newsPosts.status, "Published"))
-    .orderBy(desc(newsPosts.publishedAt), desc(newsPosts.createdAt));
+function parsedKind(value: unknown, fallback: PostKind = "News"): PostKind {
+  const result = postKindSchema.safeParse(value);
+  return result.success ? result.data : fallback;
 }
 
-export async function listPosts(database: Database) {
+export async function listPublishedNews(
+  database: Database,
+  kind: PostKind = "News",
+  page: PageRequest,
+) {
+  const cursor = page.after;
+  const conditions = [
+    eq(newsPosts.status, "Published"),
+    eq(newsPosts.kind, kind),
+    ...(cursor
+      ? [
+          or(
+            sql`${newsPosts.publishedAt} < ${cursor[0]}::timestamptz`,
+            and(
+              sql`${newsPosts.publishedAt} = ${cursor[0]}::timestamptz`,
+              sql`${newsPosts.createdAt} < ${cursor[1]}::timestamptz`,
+            ),
+            and(
+              sql`${newsPosts.publishedAt} = ${cursor[0]}::timestamptz`,
+              sql`${newsPosts.createdAt} = ${cursor[1]}::timestamptz`,
+              sql`${newsPosts.id} < ${cursor[2]}::uuid`,
+            ),
+          ),
+        ]
+      : []),
+  ];
+
+  return database
+    .select({
+      id: newsPosts.id,
+      title: newsPosts.title,
+      titleAm: newsPosts.titleAm,
+      summary: newsPosts.summary,
+      body: newsPosts.body,
+      category: newsPosts.category,
+      kind: newsPosts.kind,
+      publishedAt: newsPosts.publishedAt,
+      source: newsPosts.source,
+      imageUrl: newsPosts.imageUrl,
+      featured: newsPosts.featured,
+      _k0: sql<string>`${newsPosts.publishedAt}::text`,
+      _k1: sql<string>`${newsPosts.createdAt}::text`,
+      _k2: newsPosts.id,
+    })
+    .from(newsPosts)
+    .where(and(...conditions))
+    .orderBy(desc(newsPosts.publishedAt), desc(newsPosts.createdAt), desc(newsPosts.id))
+    .limit(page.limit + 1);
+}
+
+export async function findPublishedPost(database: Database, kind: PostKind, id: string) {
+  const result = await database
+    .select({
+      id: newsPosts.id,
+      title: newsPosts.title,
+      titleAm: newsPosts.titleAm,
+      summary: newsPosts.summary,
+      body: newsPosts.body,
+      category: newsPosts.category,
+      kind: newsPosts.kind,
+      publishedAt: newsPosts.publishedAt,
+      source: newsPosts.source,
+      imageUrl: newsPosts.imageUrl,
+      featured: newsPosts.featured,
+    })
+    .from(newsPosts)
+    .where(and(eq(newsPosts.id, id), eq(newsPosts.kind, kind), eq(newsPosts.status, "Published")))
+    .limit(1);
+  return result[0];
+}
+
+export async function listPosts(database: Database, kind: unknown = "News") {
   return database.select(postProjection).from(newsPosts)
+    .where(eq(newsPosts.kind, parsedKind(kind)))
     .orderBy(desc(newsPosts.createdAt), desc(newsPosts.id));
 }
 
@@ -73,6 +135,7 @@ export async function createPost(database: Database, adminId: string, input: unk
       summary: post.summary,
       body: post.body,
       category: post.category,
+      kind: post.kind,
       source: post.source,
       imageUrl: post.image_url,
       featured: post.featured,

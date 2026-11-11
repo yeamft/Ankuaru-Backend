@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, gt, lte, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, lte, sql } from "drizzle-orm";
 import type { Pool } from "pg";
 import { createDatabase, type Database } from "../../infrastructure/database/index.js";
-import { accounts, accountSessions, authRateLimits, phoneOtpCodes, traders } from "../../infrastructure/database/schema.js";
+import { accounts, accountSessions, authRateLimits, legacyUsers, phoneOtpCodes, traders } from "../../infrastructure/database/schema.js";
 import { transaction } from "../../infrastructure/database/transaction.js";
 import type { AccountRole } from "./permissions.js";
 
@@ -65,35 +65,77 @@ export class PostgresAuthStore implements AuthStore {
   async register(input: Registration, passwordHash: string, session: NewSession) {
     try {
       return await transaction(this.database, async (tx) => {
-        const id = `usr_${randomUUID()}`;
-        await tx.insert(traders).values({
-          id,
-          displayName: input.display_name,
-          phone: input.phone,
-          city: input.city,
-          phoneVerified: true,
-          verificationTier: "registered",
-          role: input.role,
-          status: "Active",
-        });
+        const claims = await tx.select({
+          sourceId: legacyUsers.sourceId,
+          traderId: legacyUsers.traderId,
+        }).from(legacyUsers)
+          .where(and(
+            eq(legacyUsers.claimPhone, input.phone),
+            eq(legacyUsers.claimBlocked, false),
+            isNull(legacyUsers.claimedAt),
+          ))
+          .limit(2)
+          .for("update");
+        const claim = claims.length === 1 ? claims[0] : undefined;
+        const id = claim?.traderId ?? `usr_${randomUUID()}`;
+        if (claim) {
+          const [profile] = await tx.select({ status: traders.status }).from(traders)
+            .where(and(eq(traders.id, id), eq(traders.status, "Active"))).for("update");
+          if (!profile) throw new Error(`Legacy profile ${id} is not available to claim`);
+          await tx.update(traders).set({
+            phone: input.phone,
+            phoneVerified: true,
+            updatedAt: new Date(),
+          }).where(eq(traders.id, id));
+        } else {
+          await tx.insert(traders).values({
+            id,
+            displayName: input.display_name,
+            phone: input.phone,
+            city: input.city,
+            phoneVerified: true,
+            verificationTier: "registered",
+            role: input.role,
+            status: "Active",
+          });
+        }
         await tx.insert(accounts).values({ id, email: input.email, passwordHash });
         await tx.insert(accountSessions).values({ tokenHash: session.tokenHash, accountId: id, expiresAt: session.expiresAt });
+        if (claim) {
+          await tx.update(legacyUsers).set({ claimedAt: new Date() })
+            .where(and(eq(legacyUsers.sourceId, claim.sourceId), isNull(legacyUsers.claimedAt)));
+        }
+        const [profile] = await tx.select({
+          displayName: traders.displayName,
+          businessName: traders.businessName,
+          phone: traders.phone,
+          city: traders.city,
+          phoneVerified: traders.phoneVerified,
+          verificationTier: traders.verificationTier,
+          role: traders.role,
+          verified: traders.verified,
+          status: traders.status,
+        }).from(traders).where(eq(traders.id, id));
         return {
           id,
-          ...input,
-          business_name: null,
-          phone_verified: true,
-          verification_tier: "registered",
+          email: input.email,
+          display_name: profile.displayName,
+          business_name: profile.businessName,
+          phone: profile.phone,
+          city: profile.city,
+          phone_verified: profile.phoneVerified,
+          verification_tier: profile.verificationTier,
+          role: profile.role,
           account_role: "user",
-          verified: false,
-          status: "Active",
+          verified: profile.verified,
+          status: profile.status,
         } as Account;
       });
     } catch (error) {
       const dbError = error as { code?: string; constraint?: string; cause?: { code?: string; constraint?: string } };
       if ((dbError.code ?? dbError.cause?.code) === "23505") {
         const constraint = dbError.constraint ?? dbError.cause?.constraint;
-        if (constraint === "accounts_email_key" || constraint === "traders_phone_key") return null;
+        if (constraint === "accounts_email_key" || constraint === "accounts_pkey" || constraint === "traders_phone_key") return null;
       }
       throw error;
     }
