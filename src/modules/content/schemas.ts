@@ -20,7 +20,12 @@ export const newsPostSchema = z.object({
   status: z.enum(["Draft", "Published"]).default("Draft"),
 }).strict();
 
-export const postStatusSchema = z.object({ status: z.enum(["Draft", "Published"]) }).strict();
+export const contentSubmissionSchema = newsPostSchema
+  .omit({ status: true, featured: true })
+  .extend({ kind: z.enum(["Tender", "Event"]), source: z.string().trim().min(2).max(120) })
+  .strict();
+
+export const postStatusSchema = z.object({ status: z.enum(["Draft", "Published", "Rejected"]) }).strict();
 
 export const exchangeRateSchema = z.object({
   base_currency: z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/),

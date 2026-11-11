@@ -3,10 +3,13 @@ import type { Database } from "../../../infrastructure/database/db.js";
 import type { Guards } from "../../auth/index.js";
 import { createContentController } from "../controllers/content.controller.js";
 
-/** Public news reads and admin-only publishing and exchange-rate management. */
+/** Public content, authenticated submissions, and admin-only publishing. */
 export function createContentRoutes(database: Database, guards: Guards): Router {
   const router = Router();
   const controller = createContentController(database, guards);
+
+  router.get("/submissions", controller.mySubmissions);
+  router.post("/submissions", controller.submitContent);
 
   router.get("/news", controller.publicNews);
   router.get("/news/:id", controller.publicNewsItem);

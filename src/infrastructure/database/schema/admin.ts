@@ -50,15 +50,18 @@ export const newsPosts = pgTable("news_posts", {
   featured: boolean("featured").notNull().default(false),
   status: text("status").notNull().default("Draft"),
   createdBy: text("created_by").notNull().references(() => traders.id),
+  submittedBy: text("submitted_by").references(() => traders.id),
   publishedAt: timestamp("published_at", { withTimezone: true }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (table) => [
   check("news_posts_category_check", sql`${table.category} in ('Market', 'Origins', 'Platform', 'Export', 'Policy')`),
   check("news_posts_kind_check", sql`${table.kind} in ('News', 'Tender', 'Event')`),
-  check("news_posts_status_check", sql`${table.status} in ('Draft', 'Published')`),
+  check("news_posts_status_check", sql`${table.status} in ('Draft', 'Pending Review', 'Published', 'Rejected')`),
+  check("news_posts_submission_kind_check", sql`${table.submittedBy} is null or ${table.kind} in ('Tender', 'Event')`),
   check("news_posts_published_at_check", sql`${table.status} <> 'Published' or ${table.publishedAt} is not null`),
   index("news_posts_public_idx").on(table.status, table.publishedAt),
+  index("news_posts_submitter_idx").on(table.submittedBy, table.createdAt, table.id),
 ]);
 
 export const exchangeRates = pgTable("exchange_rates", {

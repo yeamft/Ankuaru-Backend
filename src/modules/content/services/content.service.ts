@@ -2,11 +2,11 @@ import { and, desc, eq, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Database } from "../../../infrastructure/database/db.js";
 import { transaction } from "../../../infrastructure/database/index.js";
-import { exchangeRates, newsPosts } from "../../../infrastructure/database/schema.js";
+import { exchangeRates, newsPosts, traders } from "../../../infrastructure/database/schema.js";
 import { ApiError } from "../../../shared/errors.js";
 import type { PageRequest } from "../../../shared/pagination.js";
 import { audit } from "../../admin/services/audit.service.js";
-import { exchangeRateSchema, newsPostSchema, postKindSchema, postStatusSchema, type PostKind } from "../schemas.js";
+import { contentSubmissionSchema, exchangeRateSchema, newsPostSchema, postKindSchema, postStatusSchema, type PostKind } from "../schemas.js";
 
 const postProjection = {
   id: newsPosts.id,
@@ -20,6 +20,7 @@ const postProjection = {
   image_url: newsPosts.imageUrl,
   featured: newsPosts.featured,
   status: newsPosts.status,
+  submitted_by: newsPosts.submittedBy,
   published_at: newsPosts.publishedAt,
   created_at: newsPosts.createdAt,
   updated_at: newsPosts.updatedAt,
@@ -121,9 +122,39 @@ export async function findPublishedPost(database: Database, kind: PostKind, id: 
 }
 
 export async function listPosts(database: Database, kind: unknown = "News") {
-  return database.select(postProjection).from(newsPosts)
+  return database.select({ ...postProjection, submitter_name: traders.displayName }).from(newsPosts)
+    .leftJoin(traders, eq(newsPosts.submittedBy, traders.id))
     .where(eq(newsPosts.kind, parsedKind(kind)))
     .orderBy(desc(newsPosts.createdAt), desc(newsPosts.id));
+}
+
+export async function listMySubmissions(database: Database, userId: string) {
+  return database.select(postProjection).from(newsPosts)
+    .where(eq(newsPosts.submittedBy, userId))
+    .orderBy(desc(newsPosts.createdAt), desc(newsPosts.id));
+}
+
+export async function submitContent(database: Database, userId: string, input: unknown) {
+  const post = parsed(contentSubmissionSchema, input, "invalid_content_submission");
+  return transaction(database, async (tx) => {
+    const [row] = await tx.insert(newsPosts).values({
+      title: post.title,
+      titleAm: post.title_am,
+      summary: post.summary,
+      body: post.body,
+      category: post.category,
+      kind: post.kind,
+      source: post.source,
+      imageUrl: post.image_url,
+      featured: false,
+      status: "Pending Review",
+      createdBy: userId,
+      submittedBy: userId,
+      publishedAt: null,
+    }).returning(postProjection);
+    await audit(tx, userId, "content.submitted", "news_post", row.id);
+    return row;
+  });
 }
 
 export async function createPost(database: Database, adminId: string, input: unknown) {
@@ -158,7 +189,7 @@ export async function updatePostStatus(database: Database, adminId: string, id: 
       updatedAt: new Date(),
     }).where(eq(newsPosts.id, id)).returning(postProjection);
     if (!row) notFound();
-    await audit(tx, adminId, status === "Published" ? "news.published" : "news.unpublished", "news_post", id);
+    await audit(tx, adminId, status === "Published" ? "news.published" : status === "Rejected" ? "content.rejected" : "news.unpublished", "news_post", id);
     return row;
   });
 }

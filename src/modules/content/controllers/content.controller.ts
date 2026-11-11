@@ -18,6 +18,16 @@ export function createContentController(database: Database, guards: Guards) {
   };
 
   return {
+    async mySubmissions(request: Request, response: Response) {
+      const { userId } = await guards.requireSession(request, response);
+      response.json(await content.listMySubmissions(database, userId));
+    },
+
+    async submitContent(request: Request, response: Response) {
+      const { userId } = await guards.requireSession(request, response);
+      response.status(201).json(await content.submitContent(database, userId, request.body ?? {}));
+    },
+
     async publicNews(request: Request, response: Response) {
       response.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
       const page = pageRequest(request, 3);
