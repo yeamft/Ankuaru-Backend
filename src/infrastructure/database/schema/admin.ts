@@ -47,6 +47,16 @@ export const newsPosts = pgTable("news_posts", {
   kind: text("kind").notNull().default("News"),
   source: text("source").notNull().default("ANKUARU"),
   imageUrl: text("image_url"),
+  /** Tender region / delivery location, or event venue. */
+  location: text("location"),
+  /** Tender volume, e.g. "500 MT". */
+  quantity: text("quantity"),
+  deadlineAt: timestamp("deadline_at", { withTimezone: true }),
+  startsAt: timestamp("starts_at", { withTimezone: true }),
+  endsAt: timestamp("ends_at", { withTimezone: true }),
+  /** How to apply or register. */
+  contact: text("contact"),
+  linkUrl: text("link_url"),
   featured: boolean("featured").notNull().default(false),
   status: text("status").notNull().default("Draft"),
   createdBy: text("created_by").notNull().references(() => traders.id),
@@ -59,6 +69,7 @@ export const newsPosts = pgTable("news_posts", {
   check("news_posts_kind_check", sql`${table.kind} in ('News', 'Tender', 'Event')`),
   check("news_posts_status_check", sql`${table.status} in ('Draft', 'Pending Review', 'Published', 'Rejected')`),
   check("news_posts_submission_kind_check", sql`${table.submittedBy} is null or ${table.kind} in ('Tender', 'Event')`),
+  check("news_posts_event_dates_check", sql`${table.endsAt} is null or ${table.startsAt} is null or ${table.endsAt} >= ${table.startsAt}`),
   check("news_posts_published_at_check", sql`${table.status} <> 'Published' or ${table.publishedAt} is not null`),
   index("news_posts_public_idx").on(table.status, table.publishedAt),
   index("news_posts_submitter_idx").on(table.submittedBy, table.createdAt, table.id),

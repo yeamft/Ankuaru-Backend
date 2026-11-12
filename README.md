@@ -123,6 +123,16 @@ is a `telegra.ph` page. The importer validates every source response before
 writing and can be rerun safely: it adds unseen records without replacing
 profiles, listings, news posts, or activity already present on this site.
 
+The API server also keeps the site in sync automatically: every
+`LEGACY_SYNC_INTERVAL_MINUTES` (default 30; `0` disables it) it imports new
+posts and listings using the same settings. Posts already imported are not
+re-read; run `npm run legacy:import -- --recheck-news` to re-read them all and
+refresh their news/tender/event classification. When an offer is closed,
+hidden, or reopened on the legacy site, the matching listing here follows it
+only while its owner has not claimed the profile and its status here has not
+been changed locally. A Postgres advisory lock keeps multiple API instances
+from syncing at the same time; failures are logged and retried on the next run.
+
 Imported profiles keep their source IDs and are not identity-verified. A
 profile can be claimed only by registering with the same unambiguous phone
 number and completing this site's phone OTP verification. Passwords, sessions,

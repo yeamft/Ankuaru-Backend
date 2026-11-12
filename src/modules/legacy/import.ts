@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { Database } from "../../infrastructure/database/db.js";
 import { legacyListingImports, legacyNewsImports, legacyUsers, listings, newsPosts, traders } from "../../infrastructure/database/schema.js";
-import { transaction } from "../../infrastructure/database/transaction.js";
+import { transaction, type DatabaseTransaction } from "../../infrastructure/database/transaction.js";
 import type { LegacyData, LegacyNewsData, LegacyNewsItem, LegacyOffer, LegacyUser } from "./source.js";
 
 export const NEWS_IMPORTER_ID = "legacy-news";
@@ -161,11 +161,17 @@ export async function importLegacyData(database: Database, data: LegacyData) {
     }
 
     const offerKeys = resolvedOffers.map(({ offer }) => sourceKey(offer));
-    const importedKeys = offerKeys.length
-      ? new Set((await tx.select({ sourceKey: legacyListingImports.sourceKey })
-        .from(legacyListingImports)
-        .where(inArray(legacyListingImports.sourceKey, offerKeys))).map(({ sourceKey }) => sourceKey))
-      : new Set<string>();
+    const importedRows = offerKeys.length
+      ? await tx.select({
+          sourceKey: legacyListingImports.sourceKey,
+          listingId: legacyListingImports.listingId,
+          sourceUserId: legacyListingImports.sourceUserId,
+          snapshot: legacyListingImports.snapshot,
+        }).from(legacyListingImports).where(inArray(legacyListingImports.sourceKey, offerKeys))
+      : [];
+    const importedByKey = new Map(importedRows.map((row) => [row.sourceKey, row]));
+    const importedKeys = new Set(importedByKey.keys());
+    const listingsUpdated = await syncImportedListingStatus(tx, resolvedOffers, importedByKey);
     const newOffers = resolvedOffers.filter(({ offer }) => !importedKeys.has(sourceKey(offer)));
     const listingsInserted = newOffers.length;
 
@@ -207,10 +213,61 @@ export async function importLegacyData(database: Database, data: LegacyData) {
     return {
       usersInserted: newUsers.length,
       listingsInserted,
+      listingsUpdated,
       usersSeen: data.users.length,
       offersSeen: data.offers.length,
     };
   });
+}
+
+const liveAtSource = (offer: Pick<LegacyOffer, "status" | "hidden_by_admin">) =>
+  Boolean(offer.status) && !offer.hidden_by_admin;
+
+/**
+ * Carries source open/closed changes over to already-imported listings. A listing
+ * changes only while its owner has not claimed the profile and its status here
+ * still matches what the source said last time, so local edits are never overridden.
+ */
+async function syncImportedListingStatus(
+  tx: DatabaseTransaction,
+  offers: { offer: LegacyOffer }[],
+  imported: Map<string, {
+    sourceKey: string;
+    listingId: string | null;
+    sourceUserId: string;
+    snapshot: unknown;
+  }>,
+) {
+  const changed = offers.flatMap(({ offer }) => {
+    const row = imported.get(sourceKey(offer));
+    if (!row) return [];
+    const previous = row.snapshot as Partial<LegacyOffer> | null;
+    if (!previous || typeof previous.status !== "boolean") return [];
+    const wasLive = liveAtSource({ status: previous.status, hidden_by_admin: previous.hidden_by_admin ?? false });
+    const isLive = liveAtSource(offer);
+    return wasLive === isLive ? [] : [{ offer, row, wasLive, isLive }];
+  });
+  if (!changed.length) return 0;
+
+  const unclaimed = new Set((await tx.select({ sourceId: legacyUsers.sourceId }).from(legacyUsers)
+    .where(and(
+      inArray(legacyUsers.sourceId, [...new Set(changed.map(({ row }) => row.sourceUserId))]),
+      isNull(legacyUsers.claimedAt),
+    ))).map(({ sourceId }) => sourceId));
+
+  let updated = 0;
+  for (const { offer, row, wasLive, isLive } of changed) {
+    // Record the new source state either way so the change is applied at most once.
+    await tx.update(legacyListingImports).set({ snapshot: offer })
+      .where(eq(legacyListingImports.sourceKey, row.sourceKey));
+    if (!row.listingId || !unclaimed.has(row.sourceUserId)) continue;
+    const [listing] = await tx.update(listings)
+      .set({ status: isLive ? "Active" : "Closed" })
+      .where(and(eq(listings.id, row.listingId), eq(listings.status, wasLive ? "Active" : "Closed")))
+      .returning({ id: listings.id });
+    if (listing) updated++;
+  }
+  return updated;
 }
 
 function newsValues(item: LegacyNewsItem) {

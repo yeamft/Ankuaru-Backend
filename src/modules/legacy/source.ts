@@ -360,6 +360,8 @@ export async function fetchLegacyData(
 export async function fetchLegacyNews(
   base = "https://backend.ankuaru.com/api", since = DEFAULT_SINCE,
   request: typeof fetch = fetch,
+  /** Source IDs already imported; they are left out so their articles are not re-read. */
+  skipIds: ReadonlySet<string> = new Set(),
 ): Promise<LegacyNewsData> {
   const url = new URL(base.endsWith("/") ? base : `${base}/`);
   const get = httpsGet(url, request);
@@ -374,8 +376,9 @@ export async function fetchLegacyNews(
   });
   const rows = parseRows(selected, newsRowSchema, "News");
   if (new Set(rows.map(r => r.id)).size !== rows.length) throw new Error("News: duplicate source IDs");
+  const fresh = rows.filter((row) => !skipIds.has(String(row.id)));
   if (process.env.LEGACY_SKIP_ENRICH === "1") {
-    return { news: rows.map((row) => presentNews(row)), since };
+    return { news: fresh.map((row) => presentNews(row)), since };
   }
-  return { news: await enrichNews(rows, get), since };
+  return { news: await enrichNews(fresh, get), since };
 }

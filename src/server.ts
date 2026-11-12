@@ -4,6 +4,7 @@ import { loadConfig } from "./config/env.js";
 import { createDatabase, createPool, migrate, warmPool } from "./infrastructure/database/index.js";
 import { RealtimeHub, listenForEvents } from "./infrastructure/realtime/index.js";
 import { Authentication, PostgresAuthStore } from "./modules/auth/index.js";
+import { startLegacySync } from "./modules/legacy/sync.js";
 import { inquiryNotificationHandler } from "./modules/marketplace/index.js";
 
 const config = loadConfig();
@@ -31,6 +32,15 @@ const cleanup = setInterval(
   },
   60 * 60 * 1000,
 ).unref();
+
+// Keep pulling new posts and listings from the legacy site (0 turns it off).
+const legacySyncMinutes = Number(process.env.LEGACY_SYNC_INTERVAL_MINUTES ?? 30);
+const legacySyncOn =
+  Number.isFinite(legacySyncMinutes) && legacySyncMinutes > 0 && config.environment !== "test";
+const stopLegacySync = legacySyncOn
+  ? startLegacySync(pool, database, legacySyncMinutes * 60_000)
+  : () => {};
+if (legacySyncOn) console.log(`Legacy sync every ${legacySyncMinutes} min`);
 
 const realtime = new RealtimeHub();
 const stopListening = listenForEvents(
@@ -65,6 +75,7 @@ server.requestTimeout = 30_000;
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
     clearInterval(cleanup);
+    stopLegacySync();
     server.close(() => {
       void Promise.all([stopListening(), pool.end()]).then(
         () => process.exit(0),

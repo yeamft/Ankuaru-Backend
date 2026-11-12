@@ -1,0 +1,13 @@
+[package]
+name = "ankuaru-listings-view"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone, read-only Axum service exposing sample marketplace listings. Not wired into the main backend."
+publish = false
+
+[dependencies]
+axum = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
+tower-http = { version = "0.5", features = ["cors"] }

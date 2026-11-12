@@ -18,6 +18,13 @@ const postProjection = {
   kind: newsPosts.kind,
   source: newsPosts.source,
   image_url: newsPosts.imageUrl,
+  location: newsPosts.location,
+  quantity: newsPosts.quantity,
+  deadline_at: newsPosts.deadlineAt,
+  starts_at: newsPosts.startsAt,
+  ends_at: newsPosts.endsAt,
+  contact: newsPosts.contact,
+  link_url: newsPosts.linkUrl,
   featured: newsPosts.featured,
   status: newsPosts.status,
   submitted_by: newsPosts.submittedBy,
@@ -25,6 +32,26 @@ const postProjection = {
   created_at: newsPosts.createdAt,
   updated_at: newsPosts.updatedAt,
 };
+
+const publicDetails = {
+  location: newsPosts.location,
+  quantity: newsPosts.quantity,
+  deadlineAt: newsPosts.deadlineAt,
+  startsAt: newsPosts.startsAt,
+  endsAt: newsPosts.endsAt,
+  contact: newsPosts.contact,
+  linkUrl: newsPosts.linkUrl,
+};
+
+const detailValues = (post: z.output<typeof contentSubmissionSchema> | z.output<typeof newsPostSchema>) => ({
+  location: post.location,
+  quantity: post.quantity,
+  deadlineAt: post.deadline_at ? new Date(post.deadline_at) : null,
+  startsAt: post.starts_at ? new Date(post.starts_at) : null,
+  endsAt: post.ends_at ? new Date(post.ends_at) : null,
+  contact: post.contact,
+  linkUrl: post.link_url,
+});
 
 function parsed<T extends z.ZodType>(schema: T, value: unknown, code: string): z.output<T> {
   const result = schema.safeParse(value);
@@ -89,6 +116,7 @@ export async function listPublishedNews(
       publishedAt: newsPosts.publishedAt,
       source: newsPosts.source,
       imageUrl: newsPosts.imageUrl,
+      ...publicDetails,
       featured: newsPosts.featured,
       _k0: sql<string>`${newsPosts.publishedAt}::text`,
       _k1: sql<string>`${newsPosts.createdAt}::text`,
@@ -113,6 +141,7 @@ export async function findPublishedPost(database: Database, kind: PostKind, id: 
       publishedAt: newsPosts.publishedAt,
       source: newsPosts.source,
       imageUrl: newsPosts.imageUrl,
+      ...publicDetails,
       featured: newsPosts.featured,
     })
     .from(newsPosts)
@@ -146,6 +175,7 @@ export async function submitContent(database: Database, userId: string, input: u
       kind: post.kind,
       source: post.source,
       imageUrl: post.image_url,
+      ...detailValues(post),
       featured: false,
       status: "Pending Review",
       createdBy: userId,
@@ -169,6 +199,7 @@ export async function createPost(database: Database, adminId: string, input: unk
       kind: post.kind,
       source: post.source,
       imageUrl: post.image_url,
+      ...detailValues(post),
       featured: post.featured,
       status: post.status,
       createdBy: adminId,
