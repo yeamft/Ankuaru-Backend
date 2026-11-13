@@ -6,16 +6,28 @@ import { transaction } from "../../../infrastructure/database/index.js";
 import {
   accounts,
   accountSessions,
+  exchangeRates,
+  inquiries,
   legacyUsers,
   listings,
+  newsPosts,
+  resources,
   traders,
+  verificationRequests,
 } from "../../../infrastructure/database/schema.js";
 import { ApiError } from "../../../shared/errors.js";
 import type { PageRequest } from "../../../shared/pagination.js";
 import { hashPassword } from "../../auth/password.js";
+import { normalizePhoneNumber } from "../../auth/services/auth.service.js";
 import type { AccountRole } from "../../auth/permissions.js";
 import { audit } from "./audit.service.js";
-import { adminGrantSchema, adminUserCreateSchema, userFiltersSchema } from "../schemas.js";
+import {
+  adminGrantSchema,
+  adminUserCreateSchema,
+  legacyClaimPhoneSchema,
+  legacyLinkSchema,
+  userFiltersSchema,
+} from "../schemas.js";
 
 export type UserFilters = {
   query: string | null;
@@ -67,6 +79,9 @@ export async function listUsers(database: Database, filters: UserFilters, page: 
       created_at: joinedAt,
       active_listings: sql<number>`coalesce(${counts.count}, 0)`,
       last_sign_in_at: signIns.lastSignIn,
+      /** Set on imported profiles only: the number that claims it, and whether claiming is blocked. */
+      claim_phone: legacyUsers.claimPhone,
+      claim_blocked: legacyUsers.claimBlocked,
       _k0: sql<string>`${joinedAt}::text`,
       _k1: traders.id,
     })
@@ -153,7 +168,7 @@ export async function createUser(
     throw new ApiError(
       400,
       "invalid_user_registration",
-      "Enter a valid name, email, trader role, and password of at least 12 characters.",
+      "Enter a valid name, email, trader role, and password of at least 8 characters.",
     );
   }
 
@@ -286,6 +301,148 @@ export async function revokeAdmin(database: Database, adminId: string, userId: s
     if (!changed) throw new ApiError(404, "admin_not_found", "Staff member not found.");
     await audit(tx, adminId, "staff_role.revoked", "account", userId);
     return findUser(tx, userId);
+  });
+}
+
+/** Locks an imported profile that has not been claimed yet. */
+async function lockUnclaimedProfile(tx: DatabaseTransaction, traderId: string) {
+  const [legacy] = await tx
+    .select({ sourceId: legacyUsers.sourceId, claimedAt: legacyUsers.claimedAt })
+    .from(legacyUsers)
+    .where(eq(legacyUsers.traderId, traderId))
+    .for("update");
+  if (!legacy) throw new ApiError(404, "legacy_profile_not_found", "Imported profile not found.");
+  const [account] = await tx.select({ id: accounts.id }).from(accounts).where(eq(accounts.id, traderId));
+  if (legacy.claimedAt || account)
+    throw new ApiError(409, "legacy_profile_claimed", "This profile has already been claimed.");
+  return legacy;
+}
+
+/**
+ * Sets the phone number that claims an imported profile and unblocks it. The
+ * owner then registers with that number and claims it through phone verification.
+ */
+export async function setLegacyClaimPhone(
+  database: Database,
+  adminId: string,
+  traderId: string,
+  body: Record<string, unknown>,
+) {
+  const parsed = legacyClaimPhoneSchema.safeParse(body);
+  if (!parsed.success) throw new ApiError(400, "invalid_claim_phone", "Enter a valid phone number.");
+  const phone = normalizePhoneNumber(parsed.data.phone);
+  try {
+    return await transaction(database, async (tx) => {
+      const legacy = await lockUnclaimedProfile(tx, traderId);
+      const [owner] = await tx
+        .select({ id: traders.id })
+        .from(traders)
+        .where(and(eq(traders.phone, phone), ne(traders.id, traderId)));
+      if (owner)
+        throw new ApiError(
+          409,
+          "phone_already_in_use",
+          "That number belongs to a registered account. Link the profile to that account instead.",
+        );
+      const [other] = await tx
+        .select({ sourceId: legacyUsers.sourceId })
+        .from(legacyUsers)
+        .where(
+          and(
+            eq(legacyUsers.claimPhone, phone),
+            eq(legacyUsers.claimBlocked, false),
+            isNull(legacyUsers.claimedAt),
+            ne(legacyUsers.sourceId, legacy.sourceId),
+          ),
+        );
+      if (other)
+        throw new ApiError(409, "claim_phone_in_use", "Another unclaimed profile already uses that number.");
+      await tx
+        .update(legacyUsers)
+        .set({ claimPhone: phone, claimBlocked: false })
+        .where(eq(legacyUsers.sourceId, legacy.sourceId));
+      await audit(tx, adminId, "legacy_profile.claim_phone_set", "trader", traderId);
+      const [profile] = await tx
+        .select({ status: traders.status })
+        .from(traders)
+        .where(eq(traders.id, traderId));
+      return { id: traderId, claim_phone: phone, claim_blocked: false, status: profile?.status ?? null };
+    });
+  } catch (error) {
+    const dbError = error as { code?: string; cause?: { code?: string } };
+    if ((dbError.code ?? dbError.cause?.code) === "23505")
+      throw new ApiError(409, "claim_phone_in_use", "Another unclaimed profile already uses that number.");
+    throw error;
+  }
+}
+
+/**
+ * Merges an unclaimed imported profile into an existing account: its listings,
+ * inquiries and other records move to the account, the legacy link points at the
+ * account so later imports land there, and the empty imported profile is removed.
+ */
+export async function linkLegacyProfile(
+  database: Database,
+  adminId: string,
+  traderId: string,
+  body: Record<string, unknown>,
+) {
+  const parsed = legacyLinkSchema.safeParse(body);
+  if (!parsed.success) throw new ApiError(400, "invalid_link", "Enter the email of the account to link.");
+  return transaction(database, async (tx) => {
+    const legacy = await lockUnclaimedProfile(tx, traderId);
+    const [target] = await tx
+      .select({ id: accounts.id })
+      .from(accounts)
+      .where(eq(accounts.email, parsed.data.email))
+      .for("update");
+    if (!target)
+      throw new ApiError(
+        404,
+        "account_not_found",
+        "No account uses that email. The trader must register before the profile can be linked.",
+      );
+    const [held] = await tx
+      .select({ sourceId: legacyUsers.sourceId })
+      .from(legacyUsers)
+      .where(eq(legacyUsers.traderId, target.id));
+    if (held)
+      throw new ApiError(409, "account_has_legacy_profile", "That account already holds an imported profile.");
+
+    const [source] = await tx
+      .select({ businessName: traders.businessName, city: traders.city })
+      .from(traders)
+      .where(eq(traders.id, traderId))
+      .for("update");
+    const to = target.id;
+    const moved = await tx
+      .update(listings)
+      .set({ ownerId: to })
+      .where(eq(listings.ownerId, traderId))
+      .returning({ id: listings.id });
+    await tx.update(inquiries).set({ buyerId: to }).where(eq(inquiries.buyerId, traderId));
+    await tx.update(inquiries).set({ sellerId: to }).where(eq(inquiries.sellerId, traderId));
+    await tx.update(verificationRequests).set({ traderId: to }).where(eq(verificationRequests.traderId, traderId));
+    await tx.update(newsPosts).set({ createdBy: to }).where(eq(newsPosts.createdBy, traderId));
+    await tx.update(newsPosts).set({ submittedBy: to }).where(eq(newsPosts.submittedBy, traderId));
+    await tx.update(exchangeRates).set({ createdBy: to }).where(eq(exchangeRates.createdBy, traderId));
+    await tx.update(resources).set({ createdBy: to }).where(eq(resources.createdBy, traderId));
+    // Keep the account's own details; fill in only what it lacks from the imported profile.
+    await tx
+      .update(traders)
+      .set({
+        businessName: sql`coalesce(${traders.businessName}, ${source?.businessName ?? null})`,
+        city: sql`coalesce(${traders.city}, ${source?.city ?? null})`,
+        updatedAt: new Date(),
+      })
+      .where(eq(traders.id, to));
+    await tx
+      .update(legacyUsers)
+      .set({ traderId: to, claimedAt: new Date() })
+      .where(eq(legacyUsers.sourceId, legacy.sourceId));
+    await tx.delete(traders).where(eq(traders.id, traderId));
+    await audit(tx, adminId, `legacy_profile.linked:${traderId}`, "account", to);
+    return { user: await findUser(tx, to), moved_listings: moved.length };
   });
 }
 

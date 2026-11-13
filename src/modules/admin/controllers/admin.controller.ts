@@ -165,6 +165,20 @@ export function createAdminController(database: Database, guards: Guards, access
       response.status(201).json(await users.createUser(database, adminId, request.body ?? {}));
     },
 
+    async setLegacyClaimPhone(request: IdParam, response: Response) {
+      const { adminId } = await guards.requirePermission(request, response, "users.manage");
+      response.json(
+        await users.setLegacyClaimPhone(database, adminId, request.params.id, request.body ?? {}),
+      );
+    },
+
+    async linkLegacyProfile(request: IdParam, response: Response) {
+      const { adminId } = await guards.requirePermission(request, response, "users.manage");
+      response.json(
+        await users.linkLegacyProfile(database, adminId, request.params.id, request.body ?? {}),
+      );
+    },
+
     async grantAdmin(request: Request, response: Response) {
       const { adminId } = await guards.requirePermission(request, response, "staff.manage");
       response.json(await users.grantAdmin(database, adminId, request.body ?? {}));

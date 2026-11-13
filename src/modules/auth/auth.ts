@@ -5,12 +5,19 @@ import { bearerToken, digestToken } from "./services/auth.service.js";
 
 export { digestToken };
 
+/** The Telegram bot behind "Continue with Telegram"; absent until one is configured. */
+export type TelegramConfig = { botToken: string; botUsername: string };
+
 export type PhoneOtpConfig = {
   environment: string;
   secret?: string;
   smsUrl?: string;
   smsToken?: string;
   senderId?: string;
+  /** GeezSMS API token; when set, codes are sent through GeezSMS. */
+  geezToken?: string;
+  /** Optional GeezSMS shortcode; Geez's default shortcode is used without it. */
+  geezShortcodeId?: string;
 };
 
 /** Resolves sessions and bounds concurrent password hashing for one process. */
@@ -25,7 +32,10 @@ export class Authentication {
       ...(process.env.SMS_DELIVERY_URL ? { smsUrl: process.env.SMS_DELIVERY_URL } : {}),
       ...(process.env.SMS_DELIVERY_TOKEN ? { smsToken: process.env.SMS_DELIVERY_TOKEN } : {}),
       ...(process.env.SMS_SENDER_ID ? { senderId: process.env.SMS_SENDER_ID } : {}),
+      ...(process.env.GEEZ_TOKEN ? { geezToken: process.env.GEEZ_TOKEN } : {}),
+      ...(process.env.GEEZ_SHORTCODE_ID ? { geezShortcodeId: process.env.GEEZ_SHORTCODE_ID } : {}),
     },
+    private readonly telegramConfig: TelegramConfig | null = null,
   ) {
     if (
       !Number.isSafeInteger(sessionTtlSeconds) ||
@@ -46,6 +56,10 @@ export class Authentication {
 
   getPhoneOtpConfig(): PhoneOtpConfig {
     return this.phoneOtpConfig;
+  }
+
+  getTelegramConfig(): TelegramConfig | null {
+    return this.telegramConfig;
   }
 
   getHashingRequests(): number {

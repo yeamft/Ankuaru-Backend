@@ -105,6 +105,8 @@ adopted automatically, without migrations running a second time.
 | `ENABLE_DEMO_AUTH`    | `false`                 | Demo identities (development/test only)      |
 | `PHONE_OTP_SECRET` | required in production | HMAC key for phone OTP codes (at least 32 characters) |
 | `SMS_DELIVERY_URL` / `SMS_DELIVERY_TOKEN` | no default | SMS gateway endpoint and bearer token |
+| `GEEZ_TOKEN` / `GEEZ_SHORTCODE_ID` | no default | GeezSMS API token (and optional shortcode); when set, OTP codes are sent through GeezSMS instead of `SMS_DELIVERY_URL`, and only Ethiopian `+251` numbers can be verified |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_BOT_USERNAME` | no default | Telegram bot for "Continue with Telegram"; sign-in stays off (the button hidden) until both are set. Register the site's domain with @BotFather `/setdomain` |
 | `SMS_SENDER_ID` | optional | Sender ID sent to the configured SMS gateway |
 
 The SMS gateway receives a JSON POST with `to`, `message`, and optional
@@ -135,7 +137,27 @@ from syncing at the same time; failures are logged and retried on the next run.
 
 Imported profiles keep their source IDs and are not identity-verified. A
 profile can be claimed only by registering with the same unambiguous phone
-number and completing this site's phone OTP verification. Passwords, sessions,
+number and completing this site's phone OTP verification. During sign-up,
+`POST /api/auth/phone-otp/check` (`phone`, `phone_otp`) confirms the code
+without using it and returns `claimable_profile` (name, business, city) when the
+number will claim a profile; registration then keeps that profile's name and
+city, so `display_name` and `city` may be omitted.
+
+Telegram sign-in: `GET /api/auth/telegram/config` reports whether it is on;
+`POST /api/auth/telegram` takes the login widget payload, verifies its signature
+with the bot token, and signs in the linked account or answers `needs_phone`;
+`POST /api/auth/telegram/register` (`telegram`, `phone`, `phone_otp`, `city`,
+`role`) finishes a first sign-in with a verified phone. Such accounts have no
+email or password. A legacy profile whose Telegram `chat_id` matches is claimed
+first, otherwise one with the same claim phone.
+
+Staff with `users.manage` can resolve profiles that cannot be claimed this way
+(missing, shared or conflicting phone numbers) from Admin → Unclaimed profiles:
+`POST /api/admin/users/:id/claim-phone` (`phone`) sets the number that claims the
+profile and unblocks it; `POST /api/admin/users/:id/link-account` (`email`)
+merges the profile into an existing account, moving its listings, inquiries and
+other records, deleting the empty imported profile, and pointing the legacy link
+at the account so later imports of that user's offers belong to it. Passwords, sessions,
 and administrator roles are never imported. Source-active, non-hidden offers
 are visible on the marketplace while inactive or hidden offers remain closed.
 Inquiry and account-management actions remain unavailable until the owner

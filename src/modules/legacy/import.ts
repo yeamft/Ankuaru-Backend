@@ -122,9 +122,7 @@ export async function importLegacyData(database: Database, data: LegacyData) {
     const newUsers: LegacyUser[] = [];
     for (const user of data.users) {
       const currentTraderId = legacyUserIds.get(user.id);
-      if (currentTraderId && currentTraderId !== user.id) {
-        throw new Error(`Legacy user ${user.id} is already linked to a different profile`);
-      }
+      // An admin may have linked the profile to an existing account (trader ID differs).
       if (!currentTraderId) newUsers.push(user);
     }
 
@@ -173,6 +171,8 @@ export async function importLegacyData(database: Database, data: LegacyData) {
     const importedKeys = new Set(importedByKey.keys());
     const listingsUpdated = await syncImportedListingStatus(tx, resolvedOffers, importedByKey);
     const newOffers = resolvedOffers.filter(({ offer }) => !importedKeys.has(sourceKey(offer)));
+    // New offers from a profile linked to an existing account belong to that account.
+    for (const { owner, values } of newOffers) values.ownerId = legacyUserIds.get(owner.id) ?? owner.id;
     const listingsInserted = newOffers.length;
 
     for (const rows of batches(newOffers.map(({ values }) => values))) {

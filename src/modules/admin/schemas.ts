@@ -38,3 +38,9 @@ export const adminUserCreateSchema = z
   .strict();
 
 export const settingValueSchema = z.record(z.string(), z.unknown());
+
+/** Gives an unclaimed legacy profile the phone number its owner will register with. */
+export const legacyClaimPhoneSchema = z.object({ phone: z.string().trim().min(7).max(32) }).strict();
+
+/** Merges an unclaimed legacy profile into an account that already exists. */
+export const legacyLinkSchema = z.object({ email: emailSchema }).strict();

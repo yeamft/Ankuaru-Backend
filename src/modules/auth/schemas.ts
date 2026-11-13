@@ -10,8 +10,9 @@ export const recordObjectSchema = (allowedKeys: readonly string[]) =>
 export const emailSchema = z.string().trim().toLowerCase().max(254)
   .regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/);
 
-export const passwordSchema = (isNew = false) => z.string()
-  .min(isNew ? 12 : 1)
+/** Trader passwords need 8+ characters when set; staff seed scripts ask for 12. */
+export const passwordSchema = (isNew = false, minimum = 8) => z.string()
+  .min(isNew ? minimum : 1)
   .refine((secret) => Buffer.byteLength(secret) <= 1024);
 
 export const displayNameSchema = z.string().trim().min(1).max(100);
@@ -23,6 +24,11 @@ export const registrationBodySchema = recordObjectSchema([
   "email", "password", "display_name", "role", "phone", "city", "phone_otp",
 ]);
 export const phoneOtpBodySchema = recordObjectSchema(["phone"]);
+/** Telegram's login widget payload. */
+export const telegramLoginBodySchema = recordObjectSchema([
+  "id", "first_name", "last_name", "username", "photo_url", "auth_date", "hash",
+]);
+export const telegramRegisterBodySchema = recordObjectSchema(["telegram", "phone", "phone_otp", "city", "role"]);
 export const phoneOtpConfirmBodySchema = recordObjectSchema(["phone", "phone_otp"]);
 export const loginBodySchema = recordObjectSchema(["email", "password"]);
 export const profileBodySchema = recordObjectSchema(["display_name", "role", "city"]);

@@ -23,7 +23,7 @@ const adminName = nameResult.data;
 
 const configuredPassword = process.env.SYSTEM_ADMIN_PASSWORD;
 const password = configuredPassword || randomBytes(32).toString("base64url");
-if (!passwordSchema(true).safeParse(password).success) {
+if (!passwordSchema(true, 12).safeParse(password).success) {
   console.error("SYSTEM_ADMIN_PASSWORD must be at least 12 characters and at most 1024 bytes.");
   process.exit(2);
 }

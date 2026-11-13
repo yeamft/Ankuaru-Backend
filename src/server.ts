@@ -56,7 +56,12 @@ const app = createApp({
     ...(config.smsDeliveryUrl ? { smsUrl: config.smsDeliveryUrl } : {}),
     ...(config.smsDeliveryToken ? { smsToken: config.smsDeliveryToken } : {}),
     ...(config.smsSenderId ? { senderId: config.smsSenderId } : {}),
-  }),
+    ...(config.geezToken ? { geezToken: config.geezToken } : {}),
+    ...(config.geezShortcodeId ? { geezShortcodeId: config.geezShortcodeId } : {}),
+  }, config.telegramBotToken && config.telegramBotUsername
+    // Telegram sign-in turns on once both the bot's token and username are set.
+    ? { botToken: config.telegramBotToken, botUsername: config.telegramBotUsername }
+    : null),
   environment: config.environment,
   allowDemoAuth: config.allowDemoAuth,
   realtime,

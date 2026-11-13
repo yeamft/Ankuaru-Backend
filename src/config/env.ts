@@ -18,6 +18,10 @@ export type AppConfig = {
   smsDeliveryUrl?: string;
   smsDeliveryToken?: string;
   smsSenderId?: string;
+  geezToken?: string;
+  geezShortcodeId?: string;
+  telegramBotToken?: string;
+  telegramBotUsername?: string;
 };
 
 const integerSetting = (name: string, fallback: number) => z.preprocess(
@@ -40,6 +44,10 @@ const configSchema = z.object({
   smsDeliveryUrl: z.string().url().optional(),
   smsDeliveryToken: z.string().min(1).optional(),
   smsSenderId: z.string().min(1).optional(),
+  geezToken: z.string().min(1).optional(),
+  geezShortcodeId: z.string().min(1).optional(),
+  telegramBotToken: z.string().regex(/^\d+:[\w-]+$/).optional(),
+  telegramBotUsername: z.string().regex(/^\w{5,32}$/).optional(),
 });
 
 export function loadConfig(environment = process.env): AppConfig {
@@ -58,6 +66,10 @@ export function loadConfig(environment = process.env): AppConfig {
     smsDeliveryUrl: environment.SMS_DELIVERY_URL,
     smsDeliveryToken: environment.SMS_DELIVERY_TOKEN,
     smsSenderId: environment.SMS_SENDER_ID,
+    geezToken: environment.GEEZ_TOKEN,
+    geezShortcodeId: environment.GEEZ_SHORTCODE_ID,
+    telegramBotToken: environment.TELEGRAM_BOT_TOKEN,
+    telegramBotUsername: environment.TELEGRAM_BOT_USERNAME?.replace(/^@/, ""),
   });
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
@@ -71,6 +83,8 @@ export function loadConfig(environment = process.env): AppConfig {
       sessionTtlSeconds: "SESSION_TTL_SECONDS",
     };
     const environmentKey = ENV_KEYS[key] ?? key;
+    if (key === "telegramBotToken") throw new Error("TELEGRAM_BOT_TOKEN must be the token @BotFather gave, like 123456:ABC-…");
+    if (key === "telegramBotUsername") throw new Error("TELEGRAM_BOT_USERNAME must be the bot's username, like ankuaru_bot");
     throw new Error(issue?.message.includes("required") ? issue.message : `${environmentKey} must be a positive integer`);
   }
   return parsed.data;

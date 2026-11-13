@@ -23,15 +23,25 @@ export const traders = pgTable("traders", {
 
 export const accounts = pgTable("accounts", {
   id: text("id").primaryKey().references(() => traders.id, { onDelete: "cascade" }),
-  email: text("email").notNull().unique(),
-  passwordHash: text("password_hash").notNull(),
+  /** Null, with the password, for accounts that sign in with Telegram only. */
+  email: text("email").unique(),
+  passwordHash: text("password_hash"),
   accountRole: text("account_role").notNull().default("user"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (table) => [
   check("accounts_email_check", sql`${table.email} = lower(btrim(${table.email}))`),
+  check("accounts_email_password_check", sql`(${table.email} is null) = (${table.passwordHash} is null)`),
   check("accounts_account_role_check", sql`${table.accountRole} in ('user', 'moderator', 'content_manager', 'platform_admin', 'super_admin')`),
 ]);
+
+/** A Telegram user who signs in to an account (one each way). */
+export const telegramIdentities = pgTable("telegram_identities", {
+  telegramId: text("telegram_id").primaryKey(),
+  accountId: text("account_id").notNull().unique().references(() => accounts.id, { onDelete: "cascade" }),
+  username: text("username"),
+  linkedAt: timestamp("linked_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 export const accountSessions = pgTable("account_sessions", {
   tokenHash: text("token_hash").primaryKey(),

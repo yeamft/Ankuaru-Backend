@@ -47,7 +47,7 @@ for (const role of CONFIGURABLE_ROLES) {
 }
 
 const sharedPassword = process.env.STAFF_SEED_PASSWORD;
-if (sharedPassword !== undefined && !passwordSchema(true).safeParse(sharedPassword).success) {
+if (sharedPassword !== undefined && !passwordSchema(true, 12).safeParse(sharedPassword).success) {
   console.error("STAFF_SEED_PASSWORD must be at least 12 characters and at most 1024 bytes.");
   process.exit(2);
 }
