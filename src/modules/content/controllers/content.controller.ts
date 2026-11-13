@@ -60,6 +60,11 @@ export function createContentController(database: Database, guards: Guards) {
       response.status(201).json(await content.createPost(database, adminId, request.body ?? {}));
     },
 
+    async updatePost(request: Request<{ id: string }>, response: Response) {
+      const { adminId } = await guards.requirePermission(request, response, "content.manage");
+      response.json(await content.updatePost(database, adminId, request.params.id, request.body ?? {}));
+    },
+
     async updatePostStatus(request: Request<{ id: string }>, response: Response) {
       const { adminId } = await guards.requirePermission(request, response, "content.manage");
       response.json(

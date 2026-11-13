@@ -51,6 +51,12 @@ function checkEventDates(value: DetailValues, context: z.RefinementCtx) {
 
 export const newsPostSchema = newsPostFields.superRefine(checkEventDates);
 
+/** Editing changes the content only; publishing stays with the status endpoint. */
+export const newsPostEditSchema = newsPostFields
+  .omit({ status: true })
+  .strict()
+  .superRefine(checkEventDates);
+
 export const contentSubmissionSchema = newsPostFields
   .omit({ status: true, featured: true })
   .extend({ kind: z.enum(["Tender", "Event"]), source: z.string().trim().min(2).max(120) })

@@ -16,6 +16,7 @@ export function createAdminRoutes(database: Database, guards: Guards, access: Ac
   router.get("/roles", controller.roles);
   router.put("/roles/:role", controller.updateRole);
   router.get("/overview", controller.overview);
+  router.get("/sms-credit", controller.smsCredit);
   router.get("/listings", controller.listings);
   router.post("/listings", controller.createListing);
   router.patch("/listings/:id", controller.updateListing);
@@ -30,7 +31,9 @@ export function createAdminRoutes(database: Database, guards: Guards, access: Ac
   router.get("/inquiries", controller.inquiries);
   router.patch("/inquiries/:id", controller.updateInquiry);
   router.get("/users", controller.users);
+  router.get("/activity", controller.activity);
   router.post("/users", controller.createUser);
+  router.get("/users/:id/overview", controller.userOverview);
   router.post("/users/:id/claim-phone", controller.setLegacyClaimPhone);
   router.post("/users/:id/link-account", controller.linkLegacyProfile);
   router.post("/admins", controller.grantAdmin);

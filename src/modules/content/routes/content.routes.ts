@@ -21,6 +21,7 @@ export function createContentRoutes(database: Database, guards: Guards): Router 
   router.get("/resources", controller.publicResources);
   router.get("/admin/posts", controller.posts);
   router.post("/admin/posts", controller.createPost);
+  router.put("/admin/posts/:id", controller.updatePost);
   router.patch("/admin/posts/:id/status", controller.updatePostStatus);
   router.delete("/admin/posts/:id", controller.deletePost);
   router.get("/admin/exchange-rates", controller.exchangeRates);

@@ -6,7 +6,7 @@ import { exchangeRates, newsPosts, traders } from "../../../infrastructure/datab
 import { ApiError } from "../../../shared/errors.js";
 import type { PageRequest } from "../../../shared/pagination.js";
 import { audit } from "../../admin/services/audit.service.js";
-import { contentSubmissionSchema, exchangeRateSchema, newsPostSchema, postKindSchema, postStatusSchema, type PostKind } from "../schemas.js";
+import { contentSubmissionSchema, exchangeRateSchema, newsPostEditSchema, newsPostSchema, postKindSchema, postStatusSchema, type PostKind } from "../schemas.js";
 
 const postProjection = {
   id: newsPosts.id,
@@ -43,7 +43,12 @@ const publicDetails = {
   linkUrl: newsPosts.linkUrl,
 };
 
-const detailValues = (post: z.output<typeof contentSubmissionSchema> | z.output<typeof newsPostSchema>) => ({
+const detailValues = (
+  post:
+    | z.output<typeof contentSubmissionSchema>
+    | z.output<typeof newsPostSchema>
+    | z.output<typeof newsPostEditSchema>,
+) => ({
   location: post.location,
   quantity: post.quantity,
   deadlineAt: post.deadline_at ? new Date(post.deadline_at) : null,
@@ -206,6 +211,37 @@ export async function createPost(database: Database, adminId: string, input: unk
       publishedAt: post.status === "Published" ? new Date() : null,
     }).returning(postProjection);
     await audit(tx, adminId, post.status === "Published" ? "news.published" : "news.created", "news_post", row.id);
+    return row;
+  });
+}
+
+/** Replaces a post's content (title, text, image, details); its status is left as it is. */
+export async function updatePost(database: Database, adminId: string, id: string, input: unknown) {
+  requireUuid(id);
+  const post = parsed(newsPostEditSchema, input, "invalid_news_post");
+  return transaction(database, async (tx) => {
+    const [current] = await tx.select({ submittedBy: newsPosts.submittedBy })
+      .from(newsPosts).where(eq(newsPosts.id, id)).for("update");
+    if (!current) notFound();
+    // Trader submissions are tenders or events, and must stay one of the two.
+    if (current.submittedBy && post.kind !== "Tender" && post.kind !== "Event") {
+      throw new ApiError(400, "invalid_news_post", "A trader's submission must stay a tender or an event.");
+    }
+    const [row] = await tx.update(newsPosts).set({
+      title: post.title,
+      titleAm: post.title_am,
+      summary: post.summary,
+      body: post.body,
+      category: post.category,
+      kind: post.kind,
+      source: post.source,
+      imageUrl: post.image_url,
+      ...detailValues(post),
+      featured: post.featured,
+      updatedAt: new Date(),
+    }).where(eq(newsPosts.id, id)).returning(postProjection);
+    if (!row) notFound();
+    await audit(tx, adminId, "news.edited", "news_post", id);
     return row;
   });
 }

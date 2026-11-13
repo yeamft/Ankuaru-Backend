@@ -3,9 +3,12 @@ import type { Database } from "../../../infrastructure/database/db.js";
 import { pageRequest, sendPage } from "../../../shared/pagination.js";
 import { hasPermission, type AccessControl, type Guards } from "../../auth/index.js";
 import * as contentInsights from "../../content/services/insights.service.js";
+import * as activity from "../services/activity.service.js";
 import * as admin from "../services/admin.service.js";
 import * as insights from "../services/analytics.service.js";
 import * as roles from "../services/roles.service.js";
+import * as sms from "../services/sms-credit.service.js";
+import * as userOverview from "../services/user-overview.service.js";
 import * as users from "../services/users.service.js";
 
 type IdParam = Request<{ id: string }>;
@@ -54,6 +57,12 @@ export function createAdminController(database: Database, guards: Guards, access
           request.body ?? {},
         ),
       );
+    },
+
+    /** SMS credit left for phone verification codes. */
+    async smsCredit(request: Request, response: Response) {
+      await guards.requirePermission(request, response, "console.view");
+      response.json(await sms.smsCredit());
     },
 
     async overview(request: Request, response: Response) {
@@ -158,6 +167,20 @@ export function createAdminController(database: Database, guards: Guards, access
         response.set("X-Listings-Count", String(summary.listings));
       }
       sendPage(response, await users.listUsers(database, filters, page), page);
+    },
+
+    /** Staff actions, newest first: who did what, to what, and when. */
+    async activity(request: Request, response: Response) {
+      await guards.requirePermission(request, response, "staff.manage");
+      const page = pageRequest(request, 2);
+      const filters = activity.activityFilters(request.query as Record<string, unknown>);
+      sendPage(response, await activity.listActivity(database, filters, page), page);
+    },
+
+    /** One trader's profile, listings, inquiries, KYC and staff actions. */
+    async userOverview(request: IdParam, response: Response) {
+      await guards.requirePermission(request, response, "users.manage");
+      response.json(await userOverview.userOverview(database, request.params.id));
     },
 
     async createUser(request: Request, response: Response) {
