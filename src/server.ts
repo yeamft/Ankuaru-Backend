@@ -4,6 +4,7 @@ import { loadConfig } from "./config/env.js";
 import { createDatabase, createPool, migrate, warmPool } from "./infrastructure/database/index.js";
 import { RealtimeHub, listenForEvents } from "./infrastructure/realtime/index.js";
 import { Authentication, PostgresAuthStore } from "./modules/auth/index.js";
+import { DEFAULT_EXCHANGE_RATE_URL, startExchangeRateSync } from "./modules/catalog/exchange-rate-sync.js";
 import { startLegacySync } from "./modules/legacy/sync.js";
 import { inquiryNotificationHandler } from "./modules/marketplace/index.js";
 
@@ -41,6 +42,15 @@ const stopLegacySync = legacySyncOn
   ? startLegacySync(pool, database, legacySyncMinutes * 60_000)
   : () => {};
 if (legacySyncOn) console.log(`Legacy sync every ${legacySyncMinutes} min`);
+
+// Publish the National Bank of Ethiopia's daily USD → ETB rate (EXCHANGE_RATE_SYNC=off turns it off).
+const rateSyncOn = process.env.EXCHANGE_RATE_SYNC !== "off" && config.environment !== "test";
+const rateSide = (["weighted_average", "buying", "selling"] as const)
+  .find((side) => side === process.env.EXCHANGE_RATE_SIDE) ?? "weighted_average";
+const stopRateSync = rateSyncOn
+  ? startExchangeRateSync(database, process.env.EXCHANGE_RATE_URL || DEFAULT_EXCHANGE_RATE_URL, rateSide)
+  : () => {};
+if (rateSyncOn) console.log(`Daily NBE USD/ETB rate sync on (${rateSide})`);
 
 const realtime = new RealtimeHub();
 const stopListening = listenForEvents(
@@ -81,6 +91,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
     clearInterval(cleanup);
     stopLegacySync();
+    stopRateSync();
     server.close(() => {
       void Promise.all([stopListening(), pool.end()]).then(
         () => process.exit(0),
