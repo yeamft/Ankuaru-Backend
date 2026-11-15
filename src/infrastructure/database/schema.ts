@@ -4,3 +4,4 @@ export * from "./schema/catalog.js";
 export * from "./schema/marketplace.js";
 export * from "./schema/admin.js";
 export * from "./schema/legacy.js";
+export * from "./schema/forex.js";

@@ -4,11 +4,16 @@ import type { Guards } from "../../auth/index.js";
 import * as attributes from "../services/attributes.service.js";
 import * as catalog from "../services/catalog.service.js";
 import * as prices from "../services/prices.service.js";
+import { latestBankForex } from "../services/forex.service.js";
 
 type IdParam = Request<{ id: string }>;
 
 export function createCatalogController(database: Database, guards: Guards) {
   return {
+    async latestForex(_request: Request, response: Response) {
+      response.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+      response.json(await latestBankForex(database));
+    },
     async publicCatalog(_request: Request, response: Response) {
       response.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
       response.json(await catalog.listCatalog(database));

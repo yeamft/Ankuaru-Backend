@@ -34,7 +34,7 @@ const cleanup = setInterval(
   60 * 60 * 1000,
 ).unref();
 
-// Keep pulling new posts and listings from the legacy site (0 turns it off).
+// Keep pulling news, tenders, events, bank forex rates and listings (0 turns it off).
 const legacySyncMinutes = Number(process.env.LEGACY_SYNC_INTERVAL_MINUTES ?? 30);
 const legacySyncOn =
   Number.isFinite(legacySyncMinutes) && legacySyncMinutes > 0 && config.environment !== "test";

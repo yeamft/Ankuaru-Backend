@@ -3,6 +3,8 @@ import type { Database } from "../../infrastructure/database/db.js";
 import { legacyNewsImports } from "../../infrastructure/database/schema.js";
 import { importLegacyData, importLegacyNews } from "./import.js";
 import { DEFAULT_SINCE, fetchLegacyData, fetchLegacyNews } from "./source.js";
+import { DEFAULT_CONTENT_SINCE, fetchLegacyContent } from "./content-source.js";
+import { syncBankForex } from "../catalog/services/forex.service.js";
 
 export const DEFAULT_LEGACY_API = "https://backend.ankuaru.com/api";
 
@@ -12,6 +14,7 @@ export type LegacySyncOptions = {
   since: string;
   /** Posts created before this are ignored. */
   newsSince: string;
+  contentSince?: string;
   listings: boolean;
 };
 
@@ -21,6 +24,7 @@ export function legacySyncOptions(environment = process.env): LegacySyncOptions 
     baseUrl: environment.LEGACY_API_BASE_URL ?? DEFAULT_LEGACY_API,
     since,
     newsSince: environment.LEGACY_NEWS_SINCE ?? since,
+    contentSince: environment.LEGACY_CONTENT_SINCE ?? DEFAULT_CONTENT_SINCE,
     listings: environment.LEGACY_SKIP_LISTINGS !== "1",
   };
 }
@@ -28,20 +32,23 @@ export function legacySyncOptions(environment = process.env): LegacySyncOptions 
 export type LegacySyncResult = {
   news?: Awaited<ReturnType<typeof importLegacyNews>>;
   listings?: Awaited<ReturnType<typeof importLegacyData>>;
+  posts?: Awaited<ReturnType<typeof importLegacyNews>>;
+  tender?: Awaited<ReturnType<typeof importLegacyNews>>;
+  event?: Awaited<ReturnType<typeof importLegacyNews>>;
+  forex?: Awaited<ReturnType<typeof syncBankForex>>;
   errors: string[];
 };
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
- * One pass: new posts (already-imported ones are not re-read), then new users and
- * offers plus open/closed changes. News and listings run independently so a
- * failure in one still lets the other through.
+ * Independent feeds: news, typed tenders/events, bank rates, then listings.
+ * Each failure is isolated so other feeds still run and failures retry next pass.
  */
 export async function runLegacySync(
   database: Database,
   options: LegacySyncOptions,
-  { reimportNews = false }: { reimportNews?: boolean } = {},
+  { reimportNews = false, fetcher = fetch }: { reimportNews?: boolean; fetcher?: typeof fetch } = {},
 ): Promise<LegacySyncResult> {
   const result: LegacySyncResult = { errors: [] };
   try {
@@ -49,14 +56,30 @@ export async function runLegacySync(
       ? new Set<string>()
       : new Set((await database.select({ id: legacyNewsImports.sourceId }).from(legacyNewsImports))
         .map(({ id }) => id));
-    const news = await fetchLegacyNews(options.baseUrl, options.newsSince, fetch, known);
+    const news = await fetchLegacyNews(options.baseUrl, options.newsSince, fetcher, known);
     result.news = await importLegacyNews(database, news);
   } catch (error) {
     result.errors.push(`news: ${message(error)}`);
   }
+  // The admin posts feed carries current news (the UserService feed above stopped in May 2025).
+  for (const kind of ["news", "tender", "event"] as const) {
+    try {
+      const known = new Set((await database.select({ id: legacyNewsImports.sourceId }).from(legacyNewsImports))
+        .map(({ id }) => id));
+      const content = await fetchLegacyContent(options.baseUrl, kind, options.contentSince, fetcher, known);
+      result[kind === "news" ? "posts" : kind] = await importLegacyNews(database, content);
+    } catch (error) {
+      result.errors.push(`${kind}: ${message(error)}`);
+    }
+  }
+  try {
+    result.forex = await syncBankForex(database, options.baseUrl, fetcher);
+  } catch (error) {
+    result.errors.push(`forex: ${message(error)}`);
+  }
   if (options.listings) {
     try {
-      const data = await fetchLegacyData(options.baseUrl, options.since);
+      const data = await fetchLegacyData(options.baseUrl, options.since, fetcher);
       result.listings = await importLegacyData(database, data);
     } catch (error) {
       result.errors.push(`listings: ${message(error)}`);
@@ -70,6 +93,10 @@ export function describeLegacySync(result: LegacySyncResult): string {
   if (result.news) {
     parts.push(`${result.news.newsInserted} posts added, ${result.news.newsUpdated} reclassified`);
   }
+  if (result.posts) parts.push(`${result.posts.newsInserted} news posts added`);
+  if (result.tender) parts.push(`${result.tender.newsInserted} tenders added`);
+  if (result.event) parts.push(`${result.event.newsInserted} events added`);
+  if (result.forex) parts.push(`${result.forex.snapshots} bank rate snapshots synced`);
   if (result.listings) {
     parts.push(
       `${result.listings.usersInserted} profiles and ${result.listings.listingsInserted} listings added, ` +

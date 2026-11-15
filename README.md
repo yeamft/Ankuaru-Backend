@@ -135,6 +135,24 @@ only while its owner has not claimed the profile and its status here has not
 been changed locally. A Postgres advisory lock keeps multiple API instances
 from syncing at the same time; failures are logged and retried on the next run.
 
+The same recurring sync also reads explicitly typed tenders and events from
+`POST Admin/fetchAllPost`, following every page for each type. These use their
+own source-ID namespace and retain the source text, first image, document links and attribution.
+`LEGACY_CONTENT_SINCE` limits this archive when set; by default it includes all
+tenders/events, since their latest posts may predate the news/listing cutoff.
+Existing imported content, local edits and deletions are preserved.
+
+Bank buying/selling rates are synchronized from `Admin/getAllExchangeRates` into
+`bank_forex_snapshots`, including corrections to previously published snapshots.
+`GET /api/catalog/forex/latest` serves the newest snapshot publicly; failed syncs
+retain the last successful data. The website's **Daily Banks’ Forex Rates** section
+shows USD/ETB buying and selling rates by bank with the original publication date,
+bank search, and refresh. Older snapshots are labelled as latest available, never
+as today's rates. This is separate from the existing NBE indicative-rate sync.
+News, tenders, events, forex and listings fail independently; each retries on the
+next interval. The web tender/event feeds and forex section refresh every five
+minutes while open. No separate scheduler is required while the API is running.
+
 Imported profiles keep their source IDs and are not identity-verified. A
 profile can be claimed only by registering with the same unambiguous phone
 number and completing this site's phone OTP verification. During sign-up,

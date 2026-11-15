@@ -89,6 +89,8 @@ export type LegacyNewsItem = {
   imageUrl: string | null;
   category: NewsCategory;
   kind: PostKind;
+  source?: string;
+  linkUrl?: string | null;
 };
 export type LegacyData = { users: LegacyUser[]; offers: LegacyOffer[]; since: string };
 export type LegacyNewsData = { news: LegacyNewsItem[]; since: string };
@@ -175,7 +177,7 @@ function clip(value: string, max: number) {
   return `${text.slice(0, max - 1).trimEnd()}…`;
 }
 
-function classifyNews(title: string, body: string): NewsCategory {
+export function classifyNews(title: string, body: string): NewsCategory {
   const haystack = `${title}\n${body}`;
   if (/policy|proclamation|regulation|አዋጅ|መመሪያ/i.test(haystack)) return "Policy";
   if (/export|ኤክስፖርት|\bFOB\b/i.test(haystack)) return "Export";
@@ -276,14 +278,14 @@ export function parseNews(value: unknown, since: string): LegacyNewsItem[] {
   return rows.map(row => presentNews(row));
 }
 
-function httpsGet(base: URL, request: typeof fetch) {
+export function httpsGet(base: URL, request: typeof fetch) {
   if (base.protocol !== "https:" || base.username || base.password) {
     throw new Error("Legacy API must use HTTPS without URL credentials");
   }
-  return async function get(path: string, origin = base): Promise<unknown> {
+  return async function get(path: string, origin = base, init: RequestInit = {}): Promise<unknown> {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const response = await request(new URL(path, origin), { signal: AbortSignal.timeout(30_000), redirect: "error" });
+        const response = await request(new URL(path, origin), { ...init, signal: AbortSignal.timeout(30_000), redirect: "error" });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return await response.json();
       } catch {

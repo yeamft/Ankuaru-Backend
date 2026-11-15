@@ -279,7 +279,8 @@ function newsValues(item: LegacyNewsItem) {
     body: item.body,
     category: item.category,
     kind: item.kind,
-    source: "ANKUARU",
+    source: item.source ?? "ANKUARU",
+    linkUrl: item.linkUrl ?? null,
     imageUrl: item.imageUrl,
     featured: false,
     status: "Published" as const,
@@ -314,8 +315,23 @@ export async function importLegacyNews(database: Database, data: LegacyNewsData)
       : [];
     const importedIds = new Map(imported.map((row) => [row.sourceId, row.newsPostId]));
     const newItems = data.news.filter((item) => !importedIds.has(item.id));
-    const inserted: { item: LegacyNewsItem; id: string }[] = [];
+    // The same story can arrive from both legacy feeds (they overlap in May 2025).
+    // A story already on the site is recorded without a post, so it is not added twice.
+    const titleKey = (item: { kind: string; title: string }) => `${item.kind}\n${item.title.trim()}`;
+    const existingTitles = newItems.length
+      ? new Set((await tx.select({ kind: newsPosts.kind, title: newsPosts.title }).from(newsPosts)
+        .where(inArray(newsPosts.title, [...new Set(newItems.map((item) => item.title))])))
+        .map(titleKey))
+      : new Set<string>();
+    const inserted: { item: LegacyNewsItem; id: string | null }[] = [];
+    let duplicates = 0;
     for (const item of newItems) {
+      if (existingTitles.has(titleKey(item))) {
+        inserted.push({ item, id: null });
+        duplicates++;
+        continue;
+      }
+      existingTitles.add(titleKey(item));
       const [row] = await tx.insert(newsPosts).values(newsValues(item)).returning({ id: newsPosts.id });
       inserted.push({ item, id: row.id });
     }
@@ -339,7 +355,8 @@ export async function importLegacyNews(database: Database, data: LegacyNewsData)
       if (updated) newsUpdated++;
     }
     return {
-      newsInserted: inserted.length,
+      newsInserted: inserted.length - duplicates,
+      newsDuplicates: duplicates,
       newsUpdated,
       newsSeen: data.news.length,
     };
