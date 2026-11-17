@@ -64,9 +64,8 @@ export async function runLegacySync(
   // The admin posts feed carries current news (the UserService feed above stopped in May 2025).
   for (const kind of ["news", "tender", "event"] as const) {
     try {
-      const known = new Set((await database.select({ id: legacyNewsImports.sourceId }).from(legacyNewsImports))
-        .map(({ id }) => id));
-      const content = await fetchLegacyContent(options.baseUrl, kind, options.contentSince, fetcher, known);
+      // Images can be added to existing posts, including older pages of the archive.
+      const content = await fetchLegacyContent(options.baseUrl, kind, options.contentSince, fetcher);
       result[kind === "news" ? "posts" : kind] = await importLegacyNews(database, content);
     } catch (error) {
       result.errors.push(`${kind}: ${message(error)}`);
@@ -93,9 +92,9 @@ export function describeLegacySync(result: LegacySyncResult): string {
   if (result.news) {
     parts.push(`${result.news.newsInserted} posts added, ${result.news.newsUpdated} reclassified`);
   }
-  if (result.posts) parts.push(`${result.posts.newsInserted} news posts added`);
-  if (result.tender) parts.push(`${result.tender.newsInserted} tenders added`);
-  if (result.event) parts.push(`${result.event.newsInserted} events added`);
+  if (result.posts) parts.push(`${result.posts.newsInserted} news posts added, ${result.posts.newsUpdated} updated`);
+  if (result.tender) parts.push(`${result.tender.newsInserted} tenders added, ${result.tender.newsUpdated} updated`);
+  if (result.event) parts.push(`${result.event.newsInserted} events added, ${result.event.newsUpdated} updated`);
   if (result.forex) parts.push(`${result.forex.snapshots} bank rate snapshots synced`);
   if (result.listings) {
     parts.push(

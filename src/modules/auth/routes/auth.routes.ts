@@ -44,8 +44,11 @@ export function createAuthRoutes(auth: Authentication): Router {
 
   router.post("/phone-otp", controller.requestPhoneCode);
   router.post("/phone-otp/verify", controller.verifyPhoneCode);
-  // Traders: phone number + code. There is no separate registration.
+  // Traders: an SMS code the first time (no separate registration), then a PIN.
+  router.post("/phone-method", controller.phoneMethod);
   router.post("/phone-login", controller.phoneLogin);
+  router.post("/pin-login", expensive, work(controller.pinLogin));
+  router.post("/pin", expensive, work(controller.setPin));
   // Staff only (the admin portal).
   router.post("/login", expensive, work(controller.login));
   router.get("/me", controller.me);

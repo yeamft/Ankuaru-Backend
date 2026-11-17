@@ -217,8 +217,8 @@ export async function verifyAccountPhoneOtp(
 }
 
 export function publicAccount(account: Account): Account {
-  const { id, email, display_name, business_name, phone, city, phone_verified, verification_tier, role, account_role, verified, status } = account;
-  return { id, email, display_name, business_name, phone, city, phone_verified, verification_tier, role, account_role, verified, status };
+  const { id, email, display_name, business_name, phone, city, phone_verified, verification_tier, role, account_role, verified, status, has_pin } = account;
+  return { id, email, display_name, business_name, phone, city, phone_verified, verification_tier, role, account_role, verified, status, has_pin: Boolean(has_pin) };
 }
 
 export function createSession(ttlSeconds: number) {
@@ -270,6 +270,73 @@ export async function phoneLogin(
   const account = await store.resolveSession(session.tokenHash);
   if (!account) throw new ApiError(403, "account_unavailable", "This account is not active. Contact support.");
   return { user: publicAccount(account), accessToken: session.token, expiresAt: session.expiresAt, created: false };
+}
+
+/** Wrong PINs in a row before the PIN stops working and an SMS code is needed. */
+export const PIN_MAX_ATTEMPTS = 5;
+
+function pinValue(value: unknown): string {
+  if (typeof value !== "string" || !/^\d{6}$/.test(value)) invalid("Enter your 6-digit PIN.");
+  return value;
+}
+
+/**
+ * Whether this number signs in with a PIN (true) or needs an SMS code first
+ * (no account yet, no PIN set, or the PIN is locked).
+ */
+export async function phoneSignInMethod(store: AuthStore, body: Record<string, unknown>) {
+  const phone = normalizePhoneNumber(body.phone);
+  const account = await store.pinCredentials(phone);
+  const usable = Boolean(
+    account?.pin_hash &&
+    account.status === "Active" &&
+    account.pin_failed_attempts < PIN_MAX_ATTEMPTS,
+  );
+  return { phone, method: usable ? ("pin" as const) : ("code" as const) };
+}
+
+/** Signs a trader in with their phone number and PIN. */
+export async function pinLogin(store: AuthStore, body: Record<string, unknown>, ttlSeconds: number) {
+  const phone = normalizePhoneNumber(body.phone);
+  const pin = pinValue(body.pin);
+  const account = await store.pinCredentials(phone);
+  if (account && account.pin_failed_attempts >= PIN_MAX_ATTEMPTS) {
+    throw new ApiError(423, "pin_locked", "Too many wrong PINs. Sign in with a code sent to your phone.");
+  }
+  // Unknown numbers take the same slow path, so timing does not reveal accounts.
+  const valid = await verifyPassword(pin, account?.pin_hash ?? undefined);
+  if (!account || !account.pin_hash || !valid) {
+    if (account?.pin_hash) {
+      const attempts = await store.recordPinFailure(account.id);
+      if (attempts >= PIN_MAX_ATTEMPTS) {
+        throw new ApiError(423, "pin_locked", "Too many wrong PINs. Sign in with a code sent to your phone.");
+      }
+      const left = PIN_MAX_ATTEMPTS - attempts;
+      throw new ApiError(401, "invalid_pin", `Wrong PIN. ${left} ${left === 1 ? "try" : "tries"} left.`);
+    }
+    throw new ApiError(401, "invalid_pin", "Phone number or PIN is incorrect.");
+  }
+  if (account.status !== "Active") {
+    throw new ApiError(403, "account_unavailable", "This account is not active. Contact support.");
+  }
+  const session = createSession(ttlSeconds);
+  if (!(await store.createPinSession(account.id, account.pin_hash, session))) {
+    throw new ApiError(401, "invalid_pin", "Phone number or PIN is incorrect.");
+  }
+  const user = await store.resolveSession(session.tokenHash);
+  if (!user) throw new ApiError(403, "account_unavailable", "This account is not active. Contact support.");
+  return { user: publicAccount(user), accessToken: session.token, expiresAt: session.expiresAt };
+}
+
+/** Sets (or replaces) the signed-in trader's PIN. */
+export async function setAccountPin(store: AuthStore, user: Account, body: Record<string, unknown>) {
+  const pin = pinValue(body.pin);
+  if (/^(\d)\1{5}$/.test(pin) || "0123456789".includes(pin) || "9876543210".includes(pin)) {
+    invalid("Choose a PIN that is harder to guess (not 111111 or 123456).");
+  }
+  if (!(await store.setPin(user.id, await hashPassword(pin)))) {
+    throw new ApiError(401, "unauthorized", "A valid session is required.");
+  }
 }
 
 /** Email and password sign-in, for staff only; traders sign in with their phone. */

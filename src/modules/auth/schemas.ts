@@ -21,6 +21,8 @@ export const phoneInputSchema = z.string().trim().min(7).max(32);
 export const traderRoleSchema = z.enum(["buyer", "seller", "both"]);
 
 export const phoneOtpBodySchema = recordObjectSchema(["phone"]);
+export const pinLoginBodySchema = recordObjectSchema(["phone", "pin"]);
+export const pinBodySchema = recordObjectSchema(["pin"]);
 export const phoneOtpConfirmBodySchema = recordObjectSchema(["phone", "phone_otp"]);
 export const loginBodySchema = recordObjectSchema(["email", "password"]);
 export const profileBodySchema = recordObjectSchema(["display_name", "role", "city"]);

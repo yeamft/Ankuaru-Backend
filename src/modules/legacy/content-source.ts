@@ -83,17 +83,18 @@ export async function fetchLegacyContent(
       body: JSON.stringify({ type: kind, page, pageSize: 100 }),
     }));
     if (payload.pagination.currentPage !== page) throw new Error("Legacy content pagination did not advance");
-    let fresh = 0;
+    let withinCutoff = false;
     for (const row of payload.posts) {
       if (row.type !== kind) throw new Error("Legacy content returned the wrong post type");
       // Separate namespace: this ID is not the UserService news-feed ID.
       const id = `post:${row.id}`;
       if (seen.has(id)) continue; // A new post can shift page boundaries while fetching.
       seen.add(id);
-      if (Date.parse(row.createdAt) < cutoff || skipIds.has(id)) continue;
+      if (Date.parse(row.createdAt) < cutoff) continue;
+      withinCutoff = true;
+      if (skipIds.has(id)) continue;
       const content = parseLegacyContentBody(row.body);
       const title = row.title.slice(0, 200);
-      fresh++;
       // news_posts needs a title of 3+ and a summary and body of 10+ characters. Lead a very
       // short body with the title; posts still too short are test entries and are left out.
       const text = content.body.trim().length >= 10 ? content.body : [title, content.body].filter(Boolean).join("\n\n");
@@ -108,7 +109,7 @@ export async function fetchLegacyContent(
         source: row.source?.trim().slice(0, 200) || "ANKUARU",
       });
     }
-    if (page >= payload.pagination.totalPages || (payload.posts.length && !fresh)) break;
+    if (page >= payload.pagination.totalPages || (payload.posts.length && !withinCutoff)) break;
     if (!payload.posts.length) throw new Error("Legacy content returned an incomplete page");
   }
   return { news, since };

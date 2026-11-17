@@ -291,7 +291,7 @@ function newsValues(item: LegacyNewsItem) {
   };
 }
 
-/** Imports source news once. Reruns only add previously unseen posts. */
+/** Adds unseen posts and refreshes source images without replacing local edits. */
 export async function importLegacyNews(database: Database, data: LegacyNewsData) {
   if (!Number.isFinite(Date.parse(data.since))) throw new Error("Invalid migration cutoff");
   return transaction(database, async (tx) => {
@@ -311,6 +311,7 @@ export async function importLegacyNews(database: Database, data: LegacyNewsData)
       ? await tx.select({
           sourceId: legacyNewsImports.sourceId,
           newsPostId: legacyNewsImports.newsPostId,
+          snapshot: legacyNewsImports.snapshot,
         }).from(legacyNewsImports).where(inArray(legacyNewsImports.sourceId, sourceIds))
       : [];
     const importedIds = new Map(imported.map((row) => [row.sourceId, row.newsPostId]));
@@ -352,7 +353,24 @@ export async function importLegacyNews(database: Database, data: LegacyNewsData)
       const [updated] = await tx.update(newsPosts).set({ kind: item.kind, updatedAt: new Date() })
         .where(and(eq(newsPosts.id, row.newsPostId), ne(newsPosts.kind, item.kind)))
         .returning({ id: newsPosts.id });
-      if (updated) newsUpdated++;
+      const previous = row.snapshot as LegacyNewsItem;
+      let imageUpdated = false;
+      if (item.imageUrl !== previous.imageUrl) {
+        // Only replace the image if it still matches the last imported value.
+        // This also preserves deliberate local removals and leaves other content alone.
+        const [image] = await tx.update(newsPosts)
+          .set({ imageUrl: item.imageUrl, updatedAt: new Date() })
+          .where(and(
+            eq(newsPosts.id, row.newsPostId),
+            sql`${newsPosts.imageUrl} is not distinct from ${previous.imageUrl ?? null}`,
+          ))
+          .returning({ id: newsPosts.id });
+        imageUpdated = Boolean(image);
+        await tx.update(legacyNewsImports)
+          .set({ snapshot: { ...previous, imageUrl: item.imageUrl } })
+          .where(eq(legacyNewsImports.sourceId, row.sourceId));
+      }
+      if (updated || imageUpdated) newsUpdated++;
     }
     return {
       newsInserted: inserted.length - duplicates,

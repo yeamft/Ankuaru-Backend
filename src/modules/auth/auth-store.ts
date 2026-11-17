@@ -21,6 +21,8 @@ export type Account = {
   account_role: AccountRole;
   verified: boolean;
   status: "Active" | "Pending" | "Suspended";
+  /** Whether the trader has set a sign-in PIN yet. */
+  has_pin: boolean;
 };
 export type Credentials = Account & { password_hash: string };
 export type Registration = Pick<Account, "email" | "display_name" | "role"> & {
@@ -31,6 +33,14 @@ export type ProfileUpdate = Partial<Pick<Account, "display_name" | "role" | "cit
 export type NewSession = { tokenHash: string; expiresAt: Date };
 /** An imported legacy profile that registering with its phone number will claim. */
 export type ClaimableProfile = { display_name: string; business_name: string | null; city: string | null };
+/** What a PIN sign-in needs to know about the account behind a phone number. */
+export type PinCredentials = {
+  id: string;
+  status: Account["status"];
+  account_role: AccountRole;
+  pin_hash: string | null;
+  pin_failed_attempts: number;
+};
 /** Outcome of starting a session for the trader who owns a verified phone number. */
 export type PhoneSessionResult = "signed_in" | "inactive" | "none";
 
@@ -39,6 +49,13 @@ export interface AuthStore {
   register(input: Registration, passwordHash: string | null, session: NewSession): Promise<Account | null>;
   /** Starts a session for the account whose trader profile uses this (already verified) phone. */
   createPhoneSession(phone: string, session: NewSession): Promise<PhoneSessionResult>;
+  /** The account behind a phone number, for PIN sign-in; null when there is none. */
+  pinCredentials(phone: string): Promise<PinCredentials | null>;
+  /** Counts a wrong PIN and returns the new total. */
+  recordPinFailure(accountId: string): Promise<number>;
+  /** Starts a session if the PIN is still `expectedPinHash` and the trader is active. */
+  createPinSession(accountId: string, expectedPinHash: string, session: NewSession): Promise<boolean>;
+  setPin(accountId: string, pinHash: string): Promise<boolean>;
   createPhoneOtp(phone: string, codeHash: string, expiresAt: Date): Promise<boolean>;
   deletePhoneOtp(phone: string): Promise<void>;
   consumePhoneOtp(phone: string, codeHash: string): Promise<boolean>;
@@ -66,6 +83,7 @@ const accountSelection = {
   account_role: accounts.accountRole,
   verified: traders.verified,
   status: traders.status,
+  has_pin: sql<boolean>`${accounts.pinHash} is not null`,
 };
 
 export class PostgresAuthStore implements AuthStore {
@@ -147,6 +165,7 @@ export class PostgresAuthStore implements AuthStore {
           account_role: "user",
           verified: profile.verified,
           status: profile.status,
+          has_pin: false,
         } as Account;
       });
     } catch (error) {
@@ -252,6 +271,9 @@ export class PostgresAuthStore implements AuthStore {
         .for("update");
       if (!trader) return "none";
       if (trader.status !== "Active") return "inactive";
+      // A code sign-in also unlocks a PIN locked by too many wrong tries.
+      await tx.update(accounts).set({ pinFailedAttempts: 0 })
+        .where(and(eq(accounts.id, trader.id), gt(accounts.pinFailedAttempts, 0)));
       // The code just proved the number, so it counts as verified from now on.
       await tx.update(traders).set({ phoneVerified: true, updatedAt: new Date() })
         .where(and(eq(traders.id, trader.id), eq(traders.phoneVerified, false)));
@@ -262,6 +284,50 @@ export class PostgresAuthStore implements AuthStore {
       });
       return "signed_in";
     });
+  }
+
+  async pinCredentials(phone: string): Promise<PinCredentials | null> {
+    const [row] = await this.database.select({
+      id: accounts.id,
+      status: traders.status,
+      account_role: accounts.accountRole,
+      pin_hash: accounts.pinHash,
+      pin_failed_attempts: accounts.pinFailedAttempts,
+    }).from(traders)
+      .innerJoin(accounts, eq(accounts.id, traders.id))
+      .where(eq(traders.phone, phone));
+    return (row as PinCredentials | undefined) ?? null;
+  }
+
+  async recordPinFailure(accountId: string) {
+    const [row] = await this.database.update(accounts)
+      .set({ pinFailedAttempts: sql`${accounts.pinFailedAttempts} + 1` })
+      .where(eq(accounts.id, accountId))
+      .returning({ attempts: accounts.pinFailedAttempts });
+    return row?.attempts ?? 0;
+  }
+
+  async createPinSession(accountId: string, expectedPinHash: string, session: NewSession) {
+    return transaction(this.database, async (tx) => {
+      // Lock in the same order as suspension: trader, then account.
+      const [trader] = await tx.select({ id: traders.id }).from(traders)
+        .where(and(eq(traders.id, accountId), eq(traders.status, "Active"))).for("update");
+      if (!trader) return false;
+      const [account] = await tx.update(accounts).set({ pinFailedAttempts: 0 })
+        .where(and(eq(accounts.id, accountId), eq(accounts.pinHash, expectedPinHash)))
+        .returning({ id: accounts.id });
+      if (!account) return false;
+      await tx.insert(accountSessions).values({ tokenHash: session.tokenHash, accountId, expiresAt: session.expiresAt });
+      return true;
+    });
+  }
+
+  async setPin(accountId: string, pinHash: string) {
+    const [updated] = await this.database.update(accounts)
+      .set({ pinHash, pinFailedAttempts: 0, updatedAt: new Date() })
+      .where(eq(accounts.id, accountId))
+      .returning({ id: accounts.id });
+    return Boolean(updated);
   }
 
   async createSession(accountId: string, expectedHash: string, session: NewSession) {

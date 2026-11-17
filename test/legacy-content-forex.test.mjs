@@ -112,6 +112,61 @@ test("forex rejects invalid payloads and treats missing/implausible rates as una
   assert.throws(() => parseBankForex({ data: [{ ...input, createdAt: "bad date" }] }));
 });
 
+test("sync refreshes images on older tender pages and serves them without replacing local edits", async (t) => {
+  const publicBase = await fixture(t, context);
+  let imageUrl = null;
+  const requested = [];
+  const fetcher = async (url, init) => {
+    if (url.pathname.endsWith("fetchnewsdetails")) return new Response(null, { status: 503 });
+    if (url.pathname.endsWith("getAllExchangeRates")) return Response.json({ data: [snapshot()] });
+    const { type, page: currentPage } = JSON.parse(init.body);
+    if (type !== "tender") return Response.json(page([]));
+    requested.push(currentPage);
+    const row = post(currentPage);
+    row.title = `Tender announcement ${currentPage}`;
+    row.body = JSON.stringify([
+      { type: "paragraph", text: "Original tender details" },
+      ...(currentPage === 2 && imageUrl ? [{ type: "image", url: imageUrl }] : []),
+    ]);
+    return Response.json(page([row], currentPage, 2));
+  };
+  const options = { baseUrl: base, since, newsSince: since, listings: false };
+  assert.equal((await runLegacySync(database, options, { fetcher })).tender.newsInserted, 2);
+  const { rows: [target] } = await context.pool.query("SELECT news_post_id FROM legacy_news_imports WHERE source_id = 'post:2'");
+  await context.pool.query("UPDATE news_posts SET title = 'Local title', body = 'Local tender details' WHERE id = $1", [target.news_post_id]);
+
+  imageUrl = "https://example.com/added-later.jpg";
+  requested.length = 0;
+  assert.equal((await runLegacySync(database, options, { fetcher })).tender.newsUpdated, 1);
+  assert.deepEqual(requested, [1, 2]);
+  const response = await fetch(`${publicBase}/api/content/tenders`);
+  assert.equal(response.status, 200);
+  const tender = (await response.json()).find(item => item.id === target.news_post_id);
+  assert.equal(tender.imageUrl, imageUrl);
+  assert.equal(tender.title, "Local title");
+  assert.equal(tender.body, "Local tender details");
+  assert.equal((await runLegacySync(database, options, { fetcher })).tender.newsUpdated, 0);
+
+  imageUrl = "https://example.com/replaced.jpg";
+  assert.equal((await runLegacySync(database, options, { fetcher })).tender.newsUpdated, 1);
+  imageUrl = null;
+  assert.equal((await runLegacySync(database, options, { fetcher })).tender.newsUpdated, 1);
+  imageUrl = "https://example.com/restored.jpg";
+  assert.equal((await runLegacySync(database, options, { fetcher })).tender.newsUpdated, 1);
+
+  await context.pool.query("UPDATE news_posts SET image_url = 'https://example.com/local.jpg' WHERE id = $1", [target.news_post_id]);
+  imageUrl = "https://example.com/another-source-image.jpg";
+  assert.equal((await runLegacySync(database, options, { fetcher })).tender.newsUpdated, 0);
+  assert.equal((await context.pool.query("SELECT image_url FROM news_posts WHERE id = $1", [target.news_post_id])).rows[0].image_url, "https://example.com/local.jpg");
+
+  await context.pool.query("UPDATE news_posts SET image_url = NULL WHERE id = $1", [target.news_post_id]);
+  imageUrl = "https://example.com/latest.jpg";
+  assert.equal((await runLegacySync(database, options, { fetcher })).tender.newsUpdated, 0);
+  assert.equal((await context.pool.query("SELECT image_url FROM news_posts WHERE id = $1", [target.news_post_id])).rows[0].image_url, null);
+  await context.pool.query("DELETE FROM news_posts WHERE id = $1", [target.news_post_id]);
+  assert.equal((await runLegacySync(database, options, { fetcher })).tender.newsInserted, 0);
+});
+
 test("forex is public, uses latest publication, updates corrections, and survives a failed sync", async (t) => {
   const publicBase = await fixture(t, context);
   const empty = await fetch(`${publicBase}/api/catalog/forex/latest`);

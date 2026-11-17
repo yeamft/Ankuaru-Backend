@@ -27,6 +27,10 @@ export const accounts = pgTable("accounts", {
   email: text("email").unique(),
   passwordHash: text("password_hash"),
   accountRole: text("account_role").notNull().default("user"),
+  /** A trader's sign-in PIN (scrypt), set after their first SMS-code sign-in. */
+  pinHash: text("pin_hash"),
+  /** Wrong PINs in a row; at the limit only an SMS-code sign-in works (and resets it). */
+  pinFailedAttempts: integer("pin_failed_attempts").notNull().default(0),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (table) => [

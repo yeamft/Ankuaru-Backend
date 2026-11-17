@@ -8,6 +8,9 @@ import {
   loginAccount,
   parseBody,
   phoneLogin,
+  phoneSignInMethod,
+  pinLogin,
+  setAccountPin,
   publicAccount,
   requestPhoneOtp,
   verifyAccountPhoneOtp,
@@ -17,6 +20,8 @@ import {
   loginBodySchema,
   phoneOtpBodySchema,
   phoneOtpConfirmBodySchema,
+  pinBodySchema,
+  pinLoginBodySchema,
   passwordChangeBodySchema,
   profileBodySchema,
 } from "../schemas.js";
@@ -36,6 +41,36 @@ export function createAuthController(auth: Authentication) {
         token_type: "Bearer",
         expires_at: result.expiresAt.toISOString(),
       });
+    },
+
+    /** Whether a number signs in with its PIN or needs an SMS code first. */
+    async phoneMethod(request: Request, response: Response) {
+      const body = parseBody(request.body, phoneOtpBodySchema);
+      const key = digestToken(`phone-method:${request.ip ?? "unknown"}`);
+      if (!(await store.consumeRateLimit(key))) {
+        response.set("Retry-After", "900");
+        throw new ApiError(429, "too_many_attempts", "Too many attempts. Try again later.");
+      }
+      response.json(await phoneSignInMethod(store, body));
+    },
+
+    async pinLogin(request: Request, response: Response) {
+      const body = parseBody(request.body, pinLoginBodySchema);
+      const result = await pinLogin(store, body, ttlSeconds);
+      response.json({
+        user: result.user,
+        access_token: result.accessToken,
+        token_type: "Bearer",
+        expires_at: result.expiresAt.toISOString(),
+      });
+    },
+
+    async setPin(request: Request, response: Response) {
+      const account = await auth.authenticate(request);
+      if (!account) throw new ApiError(401, "unauthorized", "A valid session is required.");
+      const body = parseBody(request.body, pinBodySchema);
+      await setAccountPin(store, account, body);
+      response.json({ user: publicAccount({ ...account, has_pin: true }) });
     },
 
     async requestPhoneCode(request: Request, response: Response) {

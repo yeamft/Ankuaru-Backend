@@ -127,8 +127,8 @@ profiles, listings, news posts, or activity already present on this site.
 
 The API server also keeps the site in sync automatically: every
 `LEGACY_SYNC_INTERVAL_MINUTES` (default 30; `0` disables it) it imports new
-posts and listings using the same settings. Posts already imported are not
-re-read; run `npm run legacy:import -- --recheck-news` to re-read them all and
+posts and listings using the same settings. UserService news already imported is not
+re-read; run `npm run legacy:import -- --recheck-news` to re-read that feed and
 refresh their news/tender/event classification. When an offer is closed,
 hidden, or reopened on the legacy site, the matching listing here follows it
 only while its owner has not claimed the profile and its status here has not
@@ -140,7 +140,9 @@ The same recurring sync also reads explicitly typed tenders and events from
 own source-ID namespace and retain the source text, first image, document links and attribution.
 `LEGACY_CONTENT_SINCE` limits this archive when set; by default it includes all
 tenders/events, since their latest posts may predate the news/listing cutoff.
-Existing imported content, local edits and deletions are preserved.
+Each pass also checks existing posts for added, replaced, or removed images.
+An image follows the source only while it still matches its last imported value;
+local image edits, other content edits, and deletions are preserved.
 
 Bank buying/selling rates are synchronized from `Admin/getAllExchangeRates` into
 `bank_forex_snapshots`, including corrections to previously published snapshots.
