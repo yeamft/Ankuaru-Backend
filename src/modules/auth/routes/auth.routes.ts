@@ -43,12 +43,10 @@ export function createAuthRoutes(auth: Authentication): Router {
     };
 
   router.post("/phone-otp", controller.requestPhoneCode);
-  router.post("/phone-otp/check", controller.checkPhoneCode);
   router.post("/phone-otp/verify", controller.verifyPhoneCode);
-  router.post("/register", expensive, work(controller.register));
-  router.get("/telegram/config", controller.telegramConfig);
-  router.post("/telegram", controller.telegramSignIn);
-  router.post("/telegram/register", controller.telegramRegister);
+  // Traders: phone number + code. There is no separate registration.
+  router.post("/phone-login", controller.phoneLogin);
+  // Staff only (the admin portal).
   router.post("/login", expensive, work(controller.login));
   router.get("/me", controller.me);
   router.patch("/me", controller.updateMe);

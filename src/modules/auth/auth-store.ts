@@ -2,14 +2,14 @@ import { randomUUID } from "node:crypto";
 import { and, eq, gt, isNull, lte, sql } from "drizzle-orm";
 import type { Pool } from "pg";
 import { createDatabase, type Database } from "../../infrastructure/database/index.js";
-import { accounts, accountSessions, authRateLimits, legacyUsers, phoneOtpCodes, telegramIdentities, traders } from "../../infrastructure/database/schema.js";
+import { accounts, accountSessions, authRateLimits, legacyUsers, phoneOtpCodes, traders } from "../../infrastructure/database/schema.js";
 import { transaction, type DatabaseTransaction } from "../../infrastructure/database/transaction.js";
 import { ApiError } from "../../shared/errors.js";
 import type { AccountRole } from "./permissions.js";
 
 export type Account = {
   id: string;
-  /** Null for accounts that sign in with Telegram only. */
+  /** Null for trader accounts, which sign in with a phone code. */
   email: string | null;
   display_name: string;
   business_name: string | null;
@@ -25,26 +25,23 @@ export type Account = {
 export type Credentials = Account & { password_hash: string };
 export type Registration = Pick<Account, "email" | "display_name" | "role"> & {
   phone: string;
-  city: string;
-  /** Set when signing up with Telegram: links it, and claims a legacy profile with this chat ID. */
-  telegram?: { id: string; username: string | null };
+  city: string | null;
 };
 export type ProfileUpdate = Partial<Pick<Account, "display_name" | "role" | "city">>;
 export type NewSession = { tokenHash: string; expiresAt: Date };
 /** An imported legacy profile that registering with its phone number will claim. */
 export type ClaimableProfile = { display_name: string; business_name: string | null; city: string | null };
+/** Outcome of starting a session for the trader who owns a verified phone number. */
+export type PhoneSessionResult = "signed_in" | "inactive" | "none";
 
 export interface AuthStore {
-  /** `passwordHash` is null for Telegram-only accounts (no email either). */
+  /** `passwordHash` is null for phone-only trader accounts (no email either). */
   register(input: Registration, passwordHash: string | null, session: NewSession): Promise<Account | null>;
-  /** Starts a session for the account linked to this Telegram user; null when none (or inactive). */
-  createTelegramSession(telegramId: string, session: NewSession): Promise<boolean>;
-  /** The unclaimed legacy profile whose Telegram chat is this user, if any. */
-  findClaimableByTelegram(telegramId: string): Promise<ClaimableProfile | null>;
+  /** Starts a session for the account whose trader profile uses this (already verified) phone. */
+  createPhoneSession(phone: string, session: NewSession): Promise<PhoneSessionResult>;
   createPhoneOtp(phone: string, codeHash: string, expiresAt: Date): Promise<boolean>;
   deletePhoneOtp(phone: string): Promise<void>;
   consumePhoneOtp(phone: string, codeHash: string): Promise<boolean>;
-  checkPhoneOtp(phone: string, codeHash: string): Promise<boolean>;
   findClaimableProfile(phone: string): Promise<ClaimableProfile | null>;
   verifyPhoneForAccount(accountId: string, phone: string, codeHash: string): Promise<boolean>;
   credentials(email: string): Promise<Credentials | null>;
@@ -81,15 +78,7 @@ export class PostgresAuthStore implements AuthStore {
   async register(input: Registration, passwordHash: string | null, session: NewSession) {
     try {
       return await transaction(this.database, async (tx) => {
-        // A Telegram sign-up first claims the legacy profile that used the same Telegram chat.
-        const chatClaims = input.telegram
-          ? await tx.select({ sourceId: legacyUsers.sourceId, traderId: legacyUsers.traderId })
-            .from(legacyUsers)
-            .where(and(eq(legacyUsers.chatId, input.telegram.id), isNull(legacyUsers.claimedAt)))
-            .limit(2)
-            .for("update")
-          : [];
-        const claims = chatClaims.length === 1 ? chatClaims : await tx.select({
+        const claims = await tx.select({
           sourceId: legacyUsers.sourceId,
           traderId: legacyUsers.traderId,
         }).from(legacyUsers)
@@ -113,7 +102,7 @@ export class PostgresAuthStore implements AuthStore {
             phone: input.phone,
             phoneVerified: true,
             role: input.role,
-            ...(profile.city ? {} : { city: input.city }),
+            ...(profile.city || !input.city ? {} : { city: input.city }),
             updatedAt: new Date(),
           }).where(eq(traders.id, id));
         } else {
@@ -129,13 +118,6 @@ export class PostgresAuthStore implements AuthStore {
           });
         }
         await tx.insert(accounts).values({ id, email: input.email, passwordHash });
-        if (input.telegram) {
-          await tx.insert(telegramIdentities).values({
-            telegramId: input.telegram.id,
-            accountId: id,
-            username: input.telegram.username,
-          });
-        }
         await tx.insert(accountSessions).values({ tokenHash: session.tokenHash, accountId: id, expiresAt: session.expiresAt });
         if (claim) {
           await tx.update(legacyUsers).set({ claimedAt: new Date() })
@@ -174,9 +156,7 @@ export class PostgresAuthStore implements AuthStore {
         if (
           constraint === "accounts_email_key" ||
           constraint === "accounts_pkey" ||
-          constraint === "traders_phone_key" ||
-          constraint === "telegram_identities_pkey" ||
-          constraint === "telegram_identities_account_id_key"
+          constraint === "traders_phone_key"
         ) return null;
       }
       throw error;
@@ -226,10 +206,6 @@ export class PostgresAuthStore implements AuthStore {
     });
   }
 
-  async checkPhoneOtp(phone: string, codeHash: string) {
-    return transaction(this.database, (tx) => this.matchPhoneOtp(tx, phone, codeHash));
-  }
-
   async findClaimableProfile(phone: string): Promise<ClaimableProfile | null> {
     const rows = await this.database.select({
       display_name: traders.displayName,
@@ -267,37 +243,25 @@ export class PostgresAuthStore implements AuthStore {
     return (row as Credentials | undefined) ?? null;
   }
 
-  async createTelegramSession(telegramId: string, session: NewSession) {
+  async createPhoneSession(phone: string, session: NewSession): Promise<PhoneSessionResult> {
     return transaction(this.database, async (tx) => {
-      const [linked] = await tx.select({ accountId: telegramIdentities.accountId })
-        .from(telegramIdentities).where(eq(telegramIdentities.telegramId, telegramId));
-      if (!linked) return false;
-      const [trader] = await tx.select({ id: traders.id }).from(traders)
-        .where(and(eq(traders.id, linked.accountId), eq(traders.status, "Active"))).for("update");
-      if (!trader) return false;
+      const [trader] = await tx.select({ id: traders.id, status: traders.status })
+        .from(traders)
+        .innerJoin(accounts, eq(accounts.id, traders.id))
+        .where(eq(traders.phone, phone))
+        .for("update");
+      if (!trader) return "none";
+      if (trader.status !== "Active") return "inactive";
+      // The code just proved the number, so it counts as verified from now on.
+      await tx.update(traders).set({ phoneVerified: true, updatedAt: new Date() })
+        .where(and(eq(traders.id, trader.id), eq(traders.phoneVerified, false)));
       await tx.insert(accountSessions).values({
         tokenHash: session.tokenHash,
-        accountId: linked.accountId,
+        accountId: trader.id,
         expiresAt: session.expiresAt,
       });
-      return true;
+      return "signed_in";
     });
-  }
-
-  async findClaimableByTelegram(telegramId: string): Promise<ClaimableProfile | null> {
-    const rows = await this.database.select({
-      display_name: traders.displayName,
-      business_name: traders.businessName,
-      city: traders.city,
-    }).from(legacyUsers)
-      .innerJoin(traders, eq(traders.id, legacyUsers.traderId))
-      .where(and(
-        eq(legacyUsers.chatId, telegramId),
-        isNull(legacyUsers.claimedAt),
-        eq(traders.status, "Active"),
-      ))
-      .limit(2);
-    return rows.length === 1 ? rows[0]! : null;
   }
 
   async createSession(accountId: string, expectedHash: string, session: NewSession) {

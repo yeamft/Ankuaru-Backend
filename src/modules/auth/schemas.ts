@@ -20,15 +20,7 @@ export const citySchema = z.string().trim().min(1).max(100);
 export const phoneInputSchema = z.string().trim().min(7).max(32);
 export const traderRoleSchema = z.enum(["buyer", "seller", "both"]);
 
-export const registrationBodySchema = recordObjectSchema([
-  "email", "password", "display_name", "role", "phone", "city", "phone_otp",
-]);
 export const phoneOtpBodySchema = recordObjectSchema(["phone"]);
-/** Telegram's login widget payload. */
-export const telegramLoginBodySchema = recordObjectSchema([
-  "id", "first_name", "last_name", "username", "photo_url", "auth_date", "hash",
-]);
-export const telegramRegisterBodySchema = recordObjectSchema(["telegram", "phone", "phone_otp", "city", "role"]);
 export const phoneOtpConfirmBodySchema = recordObjectSchema(["phone", "phone_otp"]);
 export const loginBodySchema = recordObjectSchema(["email", "password"]);
 export const profileBodySchema = recordObjectSchema(["display_name", "role", "city"]);

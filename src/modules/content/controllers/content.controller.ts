@@ -10,10 +10,12 @@ import * as insights from "../services/insights.service.js";
 type IdParam = Request<{ id: string }>;
 
 export function createContentController(database: Database, guards: Guards) {
+  /** A full story, tender or event: signed-in accounts only (lists stay public). */
   const publicPost = (kind: PostKind) => async (request: IdParam, response: Response) => {
+    // Sets Cache-Control: no-store, so shared caches never hand it to signed-out visitors.
+    await guards.requireSession(request, response);
     const item = await content.findPublishedPost(database, kind, request.params.id);
     if (!item) throw new ApiError(404, "content_not_found", "The requested content was not found.");
-    response.set("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
     response.json(item);
   };
 

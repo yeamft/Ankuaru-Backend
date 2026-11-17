@@ -1,7 +1,7 @@
-import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomInt } from "node:crypto";
 import type { Request } from "express";
-import type { Account, AuthStore, ProfileUpdate, Registration } from "../auth-store.js";
-import type { PhoneOtpConfig, TelegramConfig } from "../auth.js";
+import type { Account, AuthStore, ProfileUpdate } from "../auth-store.js";
+import type { PhoneOtpConfig } from "../auth.js";
 import { ApiError } from "../../../shared/errors.js";
 import { hashPassword, verifyPassword } from "../password.js";
 import {
@@ -185,24 +185,6 @@ function otpCode(value: unknown): string {
   return value;
 }
 
-/**
- * Confirms a sign-up code without using it up and reports the legacy profile the
- * phone number will claim. Only someone holding the phone learns about the profile.
- */
-export async function checkRegistrationPhone(
-  store: AuthStore,
-  body: Record<string, unknown>,
-  config: PhoneOtpConfig,
-) {
-  const phone = normalizePhoneNumber(body.phone);
-  const code = otpCode(body.phone_otp);
-  const secret = otpSecretFor(config);
-  if (!secret || !(await store.checkPhoneOtp(phone, otpDigest(phone, code, secret)))) {
-    throw new ApiError(400, "phone_verification_failed", "The phone code is invalid or expired. Request a new code.");
-  }
-  return { phone, claimable_profile: await store.findClaimableProfile(phone) };
-}
-
 export async function verifyAccountPhoneOtp(
   store: AuthStore,
   accountId: string,
@@ -248,160 +230,49 @@ export function createSession(ttlSeconds: number) {
   };
 }
 
-/** What Telegram's login widget returns, signed with the bot's token. */
-export type TelegramLogin = {
-  id: string;
-  first_name: string;
-  last_name?: string;
-  username?: string;
-  photo_url?: string;
-  auth_date: string;
-  hash: string;
-};
-
-const TELEGRAM_FIELDS = ["id", "first_name", "last_name", "username", "photo_url", "auth_date"] as const;
-/** A Telegram login stays usable for a day, long enough to finish signing up. */
-const TELEGRAM_LOGIN_MAX_AGE_S = 24 * 60 * 60;
-
 /**
- * Checks a login widget payload as Telegram documents it: an HMAC-SHA-256 of the
- * sorted fields keyed with SHA-256(bot token), and a recent `auth_date`.
+ * Signs a trader in with a phone number and the code sent to it. There is no
+ * separate sign-up: a number with no account yet gets one on its first sign-in,
+ * claiming the imported legacy profile for that number when there is one.
  */
-export function verifyTelegramLogin(value: unknown, config: TelegramConfig): TelegramLogin {
-  const fail = (): never => {
-    throw new ApiError(401, "telegram_login_invalid", "Telegram sign-in could not be verified. Try again.");
-  };
-  if (!value || typeof value !== "object" || Array.isArray(value)) fail();
-  const raw = value as Record<string, unknown>;
-  const fields: Record<string, string> = {};
-  for (const key of TELEGRAM_FIELDS) {
-    const field = raw[key];
-    if (field === undefined || field === null || field === "") continue;
-    if (typeof field !== "string" && typeof field !== "number") fail();
-    fields[key] = String(field);
-  }
-  const hash = typeof raw.hash === "string" ? raw.hash : "";
-  if (!/^[0-9a-f]{64}$/.test(hash) || !/^\d+$/.test(fields.id ?? "") || !fields.first_name) fail();
-  const checkString = Object.keys(fields).sort().map((key) => `${key}=${fields[key]}`).join("\n");
-  const secret = createHash("sha256").update(config.botToken).digest();
-  const expected = createHmac("sha256", secret).update(checkString).digest();
-  if (!timingSafeEqual(expected, Buffer.from(hash, "hex"))) fail();
-  const age = Math.floor(Date.now() / 1000) - Number(fields.auth_date);
-  if (!Number.isFinite(age) || age > TELEGRAM_LOGIN_MAX_AGE_S || age < -300) fail();
-  return { ...(fields as Omit<TelegramLogin, "hash">), hash } as TelegramLogin;
-}
-
-function telegramConfigOrFail(config: TelegramConfig | null): TelegramConfig {
-  if (!config) throw new ApiError(503, "telegram_unavailable", "Telegram sign-in is not available yet.");
-  return config;
-}
-
-/**
- * Signs in the account linked to this Telegram user. Without one, reports what
- * the visitor needs to finish signing up (a phone number) and any profile it claims.
- */
-export async function telegramSignIn(
+export async function phoneLogin(
   store: AuthStore,
   body: Record<string, unknown>,
   ttlSeconds: number,
-  telegram: TelegramConfig | null,
+  otpConfig: PhoneOtpConfig,
 ) {
-  const login = verifyTelegramLogin(body, telegramConfigOrFail(telegram));
+  const phone = normalizePhoneNumber(body.phone);
+  const phoneOtp = otpCode(body.phone_otp);
+  const otpSecret = otpSecretFor(otpConfig);
+  if (!otpSecret || !(await store.consumePhoneOtp(phone, otpDigest(phone, phoneOtp, otpSecret)))) {
+    throw new ApiError(400, "phone_verification_failed", "The phone code is invalid or expired. Request a new code.");
+  }
   const session = createSession(ttlSeconds);
-  if (await store.createTelegramSession(login.id, session)) {
-    const account = await store.resolveSession(session.tokenHash);
-    if (account) {
-      return { status: "signed_in" as const, user: publicAccount(account), accessToken: session.token, expiresAt: session.expiresAt };
+  const existing = await store.createPhoneSession(phone, session);
+  if (existing === "inactive") {
+    throw new ApiError(403, "account_unavailable", "This account is not active. Contact support.");
+  }
+  if (existing === "none") {
+    const claim = await store.findClaimableProfile(phone);
+    const account = await store.register({
+      email: null,
+      // Until they set their name in their profile, new traders go by their number.
+      display_name: claim?.display_name ?? `Trader ${phone.slice(-4)}`,
+      phone,
+      city: claim?.city ?? null,
+      role: "both",
+    }, null, session);
+    if (!account) {
+      throw new ApiError(409, "account_unavailable", "This phone number cannot be used to sign in. Contact support.");
     }
+    return { user: publicAccount(account), accessToken: session.token, expiresAt: session.expiresAt, created: true };
   }
-  return {
-    status: "needs_phone" as const,
-    display_name: [login.first_name, login.last_name].filter(Boolean).join(" "),
-    claimable_profile: await store.findClaimableByTelegram(login.id),
-  };
+  const account = await store.resolveSession(session.tokenHash);
+  if (!account) throw new ApiError(403, "account_unavailable", "This account is not active. Contact support.");
+  return { user: publicAccount(account), accessToken: session.token, expiresAt: session.expiresAt, created: false };
 }
 
-/** Creates an account from a Telegram login plus a verified phone number, and signs it in. */
-export async function telegramRegister(
-  store: AuthStore,
-  body: Record<string, unknown>,
-  ttlSeconds: number,
-  otpConfig: PhoneOtpConfig,
-  telegram: TelegramConfig | null,
-) {
-  const login = verifyTelegramLogin(body.telegram, telegramConfigOrFail(telegram));
-  const phone = normalizePhoneNumber(body.phone);
-  const phoneOtp = otpCode(body.phone_otp);
-  let city: string | undefined;
-  if (body.city !== undefined && body.city !== null && String(body.city).trim()) {
-    const cityResult = citySchema.safeParse(body.city);
-    if (!cityResult.success) invalid("Enter your city.");
-    city = cityResult.data;
-  }
-  const role = body.role === undefined ? "both" : traderRole(body.role);
-  const otpSecret = otpSecretFor(otpConfig);
-  if (!otpSecret || !(await store.consumePhoneOtp(phone, otpDigest(phone, phoneOtp, otpSecret)))) {
-    throw new ApiError(400, "phone_verification_failed", "The phone code is invalid or expired. Request a new code.");
-  }
-  const claim = (await store.findClaimableByTelegram(login.id)) ?? (await store.findClaimableProfile(phone));
-  const name = [login.first_name, login.last_name].filter(Boolean).join(" ").slice(0, 100);
-  const input: Registration = {
-    email: null,
-    display_name: claim?.display_name ?? (name || invalid("A display name between 1 and 100 characters is required.")),
-    phone,
-    city: city ?? claim?.city ?? invalid("Enter your city."),
-    role,
-    telegram: { id: login.id, username: login.username ?? null },
-  };
-  const session = createSession(ttlSeconds);
-  const account = await store.register(input, null, session);
-  if (!account) {
-    throw new ApiError(409, "account_exists", "This phone number or Telegram account is already linked to an account.");
-  }
-  return { user: publicAccount(account), accessToken: session.token, expiresAt: session.expiresAt };
-}
-
-export async function registerAccount(
-  store: AuthStore,
-  body: Record<string, unknown>,
-  ttlSeconds: number,
-  otpConfig: PhoneOtpConfig,
-) {
-  const phone = normalizePhoneNumber(body.phone);
-  const blank = (value: unknown) => value === undefined || value === null || (typeof value === "string" && !value.trim());
-  // Name and city may be left out when the phone claims a legacy profile; that is
-  // only known after the code is verified, so validate what was sent now.
-  let city: string | undefined;
-  if (!blank(body.city)) {
-    const cityResult = citySchema.safeParse(body.city);
-    if (!cityResult.success) invalid("Enter your city.");
-    city = cityResult.data;
-  }
-  const name = blank(body.display_name) ? undefined : displayName(body.display_name);
-  const phoneOtp = otpCode(body.phone_otp);
-  const address = email(body.email);
-  const role = body.role === undefined ? "both" : traderRole(body.role);
-  const secret = password(body.password, true);
-  const otpSecret = otpSecretFor(otpConfig);
-  if (!otpSecret || !(await store.consumePhoneOtp(phone, otpDigest(phone, phoneOtp, otpSecret)))) {
-    throw new ApiError(400, "phone_verification_failed", "The phone code is invalid or expired. Request a new code.");
-  }
-  const claim = await store.findClaimableProfile(phone);
-  const input: Registration = {
-    email: address,
-    display_name: claim?.display_name ?? name ?? invalid("A display name between 1 and 100 characters is required."),
-    phone,
-    city: city ?? claim?.city ?? invalid("Enter your city."),
-    role,
-  };
-  const passwordHash = await hashPassword(secret);
-  const session = createSession(ttlSeconds);
-  const account = await store.register(input, passwordHash, session);
-  if (!account)
-    throw new ApiError(409, "account_exists", "An account with this email or phone number already exists.");
-  return { user: publicAccount(account), accessToken: session.token, expiresAt: session.expiresAt };
-}
-
+/** Email and password sign-in, for staff only; traders sign in with their phone. */
 export async function loginAccount(
   store: AuthStore,
   body: Record<string, unknown>,
@@ -411,13 +282,14 @@ export async function loginAccount(
   const secret = password(body.password);
   const account = await store.credentials(address);
   const valid = await verifyPassword(secret, account?.password_hash);
+  if (!valid || !account || account.status !== "Active") {
+    throw new ApiError(401, "invalid_credentials", "Email or password is incorrect.");
+  }
+  if (account.account_role === "user") {
+    throw new ApiError(403, "phone_sign_in_required", "Traders sign in with their phone number and a code.");
+  }
   const session = createSession(ttlSeconds);
-  if (
-    !valid ||
-    !account ||
-    account.status !== "Active" ||
-    !(await store.createSession(account.id, account.password_hash, session))
-  ) {
+  if (!(await store.createSession(account.id, account.password_hash, session))) {
     throw new ApiError(401, "invalid_credentials", "Email or password is incorrect.");
   }
   return { user: publicAccount(account), accessToken: session.token, expiresAt: session.expiresAt };
@@ -448,7 +320,7 @@ export async function changePassword(
   body: Record<string, unknown>,
 ) {
   if (!user.email) {
-    throw new ApiError(400, "no_password", "This account signs in with Telegram and has no password to change.");
+    throw new ApiError(400, "no_password", "This account signs in with a phone code and has no password to change.");
   }
   const current = password(body.current_password);
   const replacement = password(body.new_password, true);
