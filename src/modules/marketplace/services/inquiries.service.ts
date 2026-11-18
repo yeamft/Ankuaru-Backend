@@ -1,6 +1,6 @@
 import { and, desc, eq, lt, or, sql } from "drizzle-orm";
 import type { Database } from "../../../infrastructure/database/db.js";
-import { inquiries, listings, traders } from "../../../infrastructure/database/schema.js";
+import { inquiries, inquiryEvents, listings, traders } from "../../../infrastructure/database/schema.js";
 import { transaction } from "../../../infrastructure/database/index.js";
 import { ApiError } from "../../../shared/errors.js";
 import type { PageRequest } from "../../../shared/pagination.js";
@@ -101,6 +101,13 @@ export async function createInquiry(
       seller_id: inquiries.sellerId, message: inquiries.message, status: inquiries.status,
       created_at: inquiries.createdAt,
     });
+    // The interaction log: who contacted whom (the requester, whichever side they are on).
+    await client.insert(inquiryEvents).values({
+      inquiryId: created.id,
+      actorId: buyerId,
+      kind: "contacted",
+      toStatus: created.status,
+    });
     await notifyInquiryCreated(client, created);
     return created;
   });
@@ -126,13 +133,23 @@ export async function updateInquiryStatus(
   if (!isUuid(inquiryId)) {
     throw new ApiError(400, "invalid_inquiry_id", "Inquiry ID is not valid.");
   }
-  const [row] = await database.update(inquiries).set({ status }).where(and(
-    eq(inquiries.id, inquiryId), or(eq(inquiries.buyerId, userId), eq(inquiries.sellerId, userId)),
-  )).returning({
-    id: inquiries.id, listing_id: inquiries.listingId, buyer_id: inquiries.buyerId,
-    seller_id: inquiries.sellerId, message: inquiries.message, status: inquiries.status,
-    created_at: inquiries.createdAt,
+  return transaction(database, async (client) => {
+    const own = and(
+      eq(inquiries.id, inquiryId), or(eq(inquiries.buyerId, userId), eq(inquiries.sellerId, userId)),
+    );
+    const [previous] = await client.select({ status: inquiries.status }).from(inquiries).where(own).for("update");
+    if (!previous) throw new ApiError(404, "inquiry_not_found", "Inquiry not found.");
+    const [row] = await client.update(inquiries).set({ status }).where(own).returning({
+      id: inquiries.id, listing_id: inquiries.listingId, buyer_id: inquiries.buyerId,
+      seller_id: inquiries.sellerId, message: inquiries.message, status: inquiries.status,
+      created_at: inquiries.createdAt,
+    });
+    if (!row) throw new ApiError(404, "inquiry_not_found", "Inquiry not found.");
+    if (previous.status !== status) {
+      await client.insert(inquiryEvents).values({
+        inquiryId, actorId: userId, kind: "status_changed", fromStatus: previous.status, toStatus: status,
+      });
+    }
+    return row;
   });
-  if (!row) throw new ApiError(404, "inquiry_not_found", "Inquiry not found.");
-  return row;
 }

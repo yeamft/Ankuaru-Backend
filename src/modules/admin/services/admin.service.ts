@@ -5,6 +5,7 @@ import { transaction } from "../../../infrastructure/database/index.js";
 import {
   accounts,
   inquiries,
+  inquiryEvents,
   listings,
   platformSettings,
   traders,
@@ -412,12 +413,19 @@ export async function updateInquiryStatus(database: Database, adminId: string, i
   if (!isUuid(inquiryId)) throw new ApiError(400, "invalid_inquiry_id", "Inquiry ID is not valid.");
   const status = oneOf(body.status, INQUIRY_STATUSES, "invalid_inquiry_status");
   return transaction(database, async (tx) => {
+    const [previous] = await tx.select({ status: inquiries.status }).from(inquiries)
+      .where(eq(inquiries.id, inquiryId)).for("update");
     const [row] = await tx.update(inquiries).set({ status }).where(eq(inquiries.id, inquiryId)).returning({
       id: inquiries.id, listing_id: inquiries.listingId, buyer_id: inquiries.buyerId,
       seller_id: inquiries.sellerId, message: inquiries.message, status: inquiries.status,
       created_at: inquiries.createdAt,
     });
     if (!row) notFound("inquiry_not_found", "Inquiry");
+    if (previous && previous.status !== status) {
+      await tx.insert(inquiryEvents).values({
+        inquiryId, actorId: adminId, kind: "status_changed", fromStatus: previous.status, toStatus: status,
+      });
+    }
     await audit(tx, adminId, "inquiry.status_updated", "inquiry", inquiryId);
     return row;
   });

@@ -32,6 +32,7 @@ export function createAdminRoutes(database: Database, guards: Guards, access: Ac
   router.patch("/inquiries/:id", controller.updateInquiry);
   router.get("/users", controller.users);
   router.get("/activity", controller.activity);
+  router.get("/interactions", controller.interactions);
   router.post("/users", controller.createUser);
   router.get("/users/:id/overview", controller.userOverview);
   router.post("/users/:id/claim-phone", controller.setLegacyClaimPhone);

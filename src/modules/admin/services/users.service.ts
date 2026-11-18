@@ -17,7 +17,6 @@ import {
 } from "../../../infrastructure/database/schema.js";
 import { ApiError } from "../../../shared/errors.js";
 import type { PageRequest } from "../../../shared/pagination.js";
-import { hashPassword } from "../../auth/password.js";
 import { normalizePhoneNumber } from "../../auth/services/auth.service.js";
 import type { AccountRole } from "../../auth/permissions.js";
 import { audit } from "./audit.service.js";
@@ -168,26 +167,32 @@ export async function createUser(
     throw new ApiError(
       400,
       "invalid_user_registration",
-      "Enter a valid name, email, trader role, and password of at least 8 characters.",
+      "Enter a valid name, phone number, and trader role.",
     );
   }
 
   const input = parsed.data;
-  const passwordHash = await hashPassword(input.password);
+  // Same rules as sign-in, so the trader can sign in with this number.
+  const phone = normalizePhoneNumber(input.phone);
   const id = `usr_${randomUUID()}`;
 
   try {
     return await transaction(database, async (tx) => {
+      // Phone-only trader account, like a self sign-up: no email or password. The
+      // trader signs in with an SMS code (which verifies the number) and sets a PIN.
       await tx.insert(traders).values({
         id,
         displayName: input.display_name,
+        phone,
+        city: input.city ?? null,
+        phoneVerified: false,
         role: input.role,
         status: "Active",
       });
       await tx.insert(accounts).values({
         id,
-        email: input.email,
-        passwordHash,
+        email: null,
+        passwordHash: null,
         accountRole: "user",
       });
       await audit(tx, adminId, "user.created", "account", id);
@@ -201,9 +206,9 @@ export async function createUser(
     };
     if (
       (dbError.code ?? dbError.cause?.code) === "23505" &&
-      (dbError.constraint ?? dbError.cause?.constraint) === "accounts_email_key"
+      (dbError.constraint ?? dbError.cause?.constraint) === "traders_phone_key"
     ) {
-      throw new ApiError(409, "account_exists", "An account with this email already exists.");
+      throw new ApiError(409, "account_exists", "An account with this phone number already exists.");
     }
     throw error;
   }

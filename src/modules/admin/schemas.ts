@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { ACCOUNT_ROLES, STAFF_ROLES } from "../auth/permissions.js";
 import {
+  citySchema,
   displayNameSchema,
   emailSchema,
-  passwordSchema,
+  phoneInputSchema,
   traderRoleSchema,
 } from "../auth/schemas.js";
 
@@ -30,9 +31,9 @@ export const adminGrantSchema = z.object({
 
 export const adminUserCreateSchema = z
   .object({
-    email: emailSchema,
+    phone: phoneInputSchema,
     display_name: displayNameSchema,
-    password: passwordSchema(true),
+    city: citySchema.optional(),
     role: traderRoleSchema,
   })
   .strict();

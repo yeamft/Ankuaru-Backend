@@ -69,6 +69,22 @@ export const inquiries = pgTable("inquiries", {
   index("inquiries_seller_idx").on(table.sellerId, table.createdAt),
 ]);
 
+/** Trader-to-trader interactions: a contact about a listing, then each status change. */
+export const inquiryEvents = pgTable("inquiry_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  inquiryId: uuid("inquiry_id").notNull().references(() => inquiries.id, { onDelete: "cascade" }),
+  actorId: text("actor_id").notNull(),
+  kind: text("kind").notNull(),
+  fromStatus: text("from_status"),
+  toStatus: text("to_status").notNull(),
+  createdAt: createdAt(),
+}, (table) => [
+  check("inquiry_events_kind_check", sql`${table.kind} in ('contacted', 'status_changed')`),
+  index("inquiry_events_created_idx").on(table.createdAt.desc(), table.id.desc()),
+  index("inquiry_events_inquiry_idx").on(table.inquiryId, table.createdAt),
+  index("inquiry_events_actor_idx").on(table.actorId, table.createdAt),
+]);
+
 export const listingProperties = pgTable("listing_properties", {
   listingId: text("listing_id").notNull().references(() => listings.id, { onDelete: "cascade" }),
   propertyId: uuid("property_id").notNull().references(() => catalogProperties.id),

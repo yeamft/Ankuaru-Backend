@@ -4,6 +4,7 @@ import { pageRequest, sendPage } from "../../../shared/pagination.js";
 import { hasPermission, type AccessControl, type Guards } from "../../auth/index.js";
 import * as contentInsights from "../../content/services/insights.service.js";
 import * as activity from "../services/activity.service.js";
+import * as interactions from "../services/interactions.service.js";
 import * as admin from "../services/admin.service.js";
 import * as insights from "../services/analytics.service.js";
 import * as roles from "../services/roles.service.js";
@@ -167,6 +168,14 @@ export function createAdminController(database: Database, guards: Guards, access
         response.set("X-Listings-Count", String(summary.listings));
       }
       sendPage(response, await users.listUsers(database, filters, page), page);
+    },
+
+    /** Trader-to-trader interactions, newest first: contacts and status changes. */
+    async interactions(request: Request, response: Response) {
+      await guards.requirePermission(request, response, "moderation.manage");
+      const page = pageRequest(request, 2);
+      const filters = interactions.interactionFilters(request.query as Record<string, unknown>);
+      sendPage(response, await interactions.listInteractions(database, filters, page), page);
     },
 
     /** Staff actions, newest first: who did what, to what, and when. */
