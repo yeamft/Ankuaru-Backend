@@ -11,6 +11,7 @@ export function createCatalogRoutes(database: Database, guards: Guards): Router 
   router.get("/", controller.publicCatalog);
   router.get("/prices/latest", controller.latestPrices);
   router.get("/forex/latest", controller.latestForex);
+  router.get("/forex/history", controller.forexHistory);
   router.get("/admin", controller.staffCatalog);
   router.post("/admin/products", controller.createProduct);
   router.patch("/admin/products/:id", controller.updateProduct);
