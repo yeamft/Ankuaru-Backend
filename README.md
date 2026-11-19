@@ -397,3 +397,4 @@ WHERE email = 'your-admin@example.com';
 Use HTTPS outside local development. The existing frontend login and dashboard
 still use demo sessions; these backend endpoints are ready for frontend wiring.
 Email verification and forgotten-password delivery are not implemented yet.
+# ANKUARU_BACKEND-latest
