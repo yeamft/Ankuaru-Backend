@@ -16,8 +16,12 @@ export function createCatalogController(database: Database, guards: Guards) {
     },
     /** `?days=` 1–366, default 365: one snapshot per calendar day, oldest first. */
     async forexHistory(request: Request, response: Response) {
-      const requested = Number(request.query["days"]);
-      const days = Number.isInteger(requested) ? Math.min(366, Math.max(1, requested)) : 365;
+      // "all" (or no days) is the whole history; otherwise 1–3660 days back.
+      const raw = request.query["days"];
+      const requested = Number(raw);
+      const days = raw === undefined || raw === "all" || !Number.isInteger(requested)
+        ? null
+        : Math.min(3660, Math.max(1, requested));
       response.set("Cache-Control", "public, max-age=300, stale-while-revalidate=900");
       response.json(await bankForexHistory(database, days));
     },

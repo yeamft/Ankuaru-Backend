@@ -1,7 +1,7 @@
-import { asc, desc, gte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Database } from "../../../infrastructure/database/db.js";
-import { bankForexSnapshots } from "../../../infrastructure/database/schema.js";
+import { bankForexSnapshots, exchangeRates } from "../../../infrastructure/database/schema.js";
 import { httpsGet } from "../../legacy/source.js";
 
 const rateValue = z.union([z.number(), z.string(), z.null()]).optional()
@@ -51,8 +51,18 @@ export async function syncBankForex(database: Database, base: string, request: t
   return { snapshots: snapshots.length };
 }
 
-/** The latest snapshot, plus the one before it so the page can show each rate's change. */
+/**
+ * The latest snapshot, plus the one before it so the page can show each rate's change,
+ * and the National Bank of Ethiopia's latest indicative USD/ETB rate for reference.
+ */
 export async function latestBankForex(database: Database) {
+  const [official] = await database.select({
+    rate: exchangeRates.rate,
+    effective_at: exchangeRates.effectiveAt,
+  }).from(exchangeRates)
+    .where(and(eq(exchangeRates.baseCurrency, "USD"), eq(exchangeRates.quoteCurrency, "ETB")))
+    .orderBy(desc(exchangeRates.effectiveAt), desc(exchangeRates.createdAt))
+    .limit(1);
   const [snapshot, previous] = await database.select({
     effective_at: bankForexSnapshots.effectiveAt,
     synced_at: bankForexSnapshots.syncedAt,
@@ -65,6 +75,9 @@ export async function latestBankForex(database: Database) {
     quote_currency: "ETB",
     snapshot: snapshot ?? null,
     previous: previous ? { effective_at: previous.effective_at, rates: previous.rates } : null,
+    official: official
+      ? { source: "National Bank of Ethiopia", rate: Number(official.rate), effective_at: official.effective_at }
+      : null,
   };
 }
 
@@ -74,16 +87,17 @@ const addisDay = new Intl.DateTimeFormat("en-CA", {
 });
 
 /**
- * One snapshot per Addis Ababa calendar day for the last `days` days, oldest first: the
- * day's latest (and latest-corrected) rates, for charts and the rates-by-date view.
+ * One snapshot per Addis Ababa calendar day for the last `days` days (every day on
+ * record when null), oldest first: the day's latest (and latest-corrected) rates,
+ * for charts and the rates-by-date view.
  */
-export async function bankForexHistory(database: Database, days: number) {
-  const since = new Date(Date.now() - days * 86_400_000);
+export async function bankForexHistory(database: Database, days: number | null) {
+  const since = days === null ? null : new Date(Date.now() - days * 86_400_000);
   const rows = await database.select({
     effective_at: bankForexSnapshots.effectiveAt,
     rates: bankForexSnapshots.rates,
   }).from(bankForexSnapshots)
-    .where(gte(bankForexSnapshots.effectiveAt, since))
+    .where(since ? gte(bankForexSnapshots.effectiveAt, since) : undefined)
     .orderBy(asc(bankForexSnapshots.effectiveAt), asc(bankForexSnapshots.sourceUpdatedAt), asc(bankForexSnapshots.sourceId));
   // Later rows win, so each day keeps its last snapshot.
   const byDay = new Map<string, (typeof rows)[number]>();
