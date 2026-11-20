@@ -81,6 +81,8 @@ export interface AuthStore {
   createSession(accountId: string, expectedHash: string, session: NewSession): Promise<boolean>;
   resolveSession(tokenHash: string): Promise<Account | null>;
   revokeSession(tokenHash: string): Promise<void>;
+  /** Pushes a session's expiry out to `expiresAt` (never shortens it); the new expiry, or null. */
+  renewSession(tokenHash: string, expiresAt: Date): Promise<Date | null>;
   updateProfile(accountId: string, input: ProfileUpdate): Promise<Account | null>;
   changePassword(accountId: string, expectedHash: string, passwordHash: string): Promise<boolean>;
   consumeRateLimit(key: string): Promise<boolean>;
@@ -372,6 +374,14 @@ export class PostgresAuthStore implements AuthStore {
 
   async revokeSession(tokenHash: string) {
     await this.database.delete(accountSessions).where(eq(accountSessions.tokenHash, tokenHash));
+  }
+
+  async renewSession(tokenHash: string, expiresAt: Date) {
+    const [row] = await this.database.update(accountSessions)
+      .set({ expiresAt: sql`greatest(${accountSessions.expiresAt}, ${expiresAt})` })
+      .where(and(eq(accountSessions.tokenHash, tokenHash), gt(accountSessions.expiresAt, sql`now()`)))
+      .returning({ expiresAt: accountSessions.expiresAt });
+    return row?.expiresAt ?? null;
   }
 
   async updateProfile(accountId: string, input: ProfileUpdate): Promise<Account | null> {

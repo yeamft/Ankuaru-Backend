@@ -41,6 +41,7 @@ const sessionBody = (result: SignIn) => ({
 export function createAuthController(auth: Authentication) {
   const store = auth.getStore();
   const ttlSeconds = auth.getSessionTtlSeconds();
+  const traderTtlSeconds = auth.getTraderSessionTtlSeconds();
 
   async function requireAccount(request: Request): Promise<Account> {
     const account = await auth.authenticate(request);
@@ -61,7 +62,7 @@ export function createAuthController(auth: Authentication) {
     /** Traders sign in (or, the first time, get an account) with a phone code. */
     async phoneLogin(request: Request, response: Response) {
       const body = parseBody(request.body, phoneOtpConfirmBodySchema);
-      const result = await phoneLogin(store, body, ttlSeconds, auth.getPhoneOtpConfig());
+      const result = await phoneLogin(store, body, traderTtlSeconds, auth.getPhoneOtpConfig());
       response.status(result.created ? 201 : 200).json(sessionBody(result));
     },
 
@@ -74,7 +75,7 @@ export function createAuthController(auth: Authentication) {
 
     async pinLogin(request: Request, response: Response) {
       const body = parseBody(request.body, pinLoginBodySchema);
-      response.json(sessionBody(await pinLogin(store, body, ttlSeconds)));
+      response.json(sessionBody(await pinLogin(store, body, traderTtlSeconds)));
     },
 
     async setPin(request: Request, response: Response) {
@@ -107,8 +108,20 @@ export function createAuthController(auth: Authentication) {
       response.json(sessionBody(await loginAccount(store, body, ttlSeconds)));
     },
 
+    /**
+     * The signed-in account. For traders this also renews the session, so someone who
+     * keeps using the app stays signed in; staff sessions keep their fixed lifetime.
+     */
     async me(request: Request, response: Response) {
-      response.json({ user: publicAccount(await requireAccount(request)) });
+      const account = await requireAccount(request);
+      const token = bearerToken(request);
+      const expiresAt = account.account_role === "user" && token
+        ? await store.renewSession(digestToken(token), new Date(Date.now() + traderTtlSeconds * 1000))
+        : null;
+      response.json({
+        user: publicAccount(account),
+        ...(expiresAt ? { expires_at: expiresAt.toISOString() } : {}),
+      });
     },
 
     async updateMe(request: Request, response: Response) {

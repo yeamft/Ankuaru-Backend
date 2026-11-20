@@ -13,6 +13,8 @@ export type AppConfig = {
   /** Requests slower than this are logged, in ms. */
   slowRequestMs: number;
   sessionTtlSeconds: number;
+  /** How long a trader stays signed in without using the app; renewed while they do. */
+  traderSessionTtlSeconds: number;
   allowDemoAuth: boolean;
   phoneOtpSecret?: string;
   smsDeliveryUrl?: string;
@@ -63,6 +65,7 @@ const configSchema = z.object({
   databaseStatementTimeoutMs: integerSetting("DATABASE_STATEMENT_TIMEOUT_MS", 10_000),
   slowRequestMs: integerSetting("SLOW_REQUEST_MS", 1_000),
   sessionTtlSeconds: integerSetting("SESSION_TTL_SECONDS", 86400),
+  traderSessionTtlSeconds: integerSetting("TRADER_SESSION_TTL_SECONDS", 2592000),
   allowDemoAuth: z.boolean().default(false),
   phoneOtpSecret: z.string().min(32).optional(),
   smsDeliveryUrl: z.string().url().optional(),
@@ -85,6 +88,7 @@ export function loadConfig(environment = process.env): AppConfig {
     databaseStatementTimeoutMs: environment.DATABASE_STATEMENT_TIMEOUT_MS,
     slowRequestMs: environment.SLOW_REQUEST_MS,
     sessionTtlSeconds: environment.SESSION_TTL_SECONDS,
+    traderSessionTtlSeconds: environment.TRADER_SESSION_TTL_SECONDS,
     allowDemoAuth: environment.ENABLE_DEMO_AUTH === "true",
     phoneOtpSecret: environment.PHONE_OTP_SECRET,
     smsDeliveryUrl: environment.SMS_DELIVERY_URL,
@@ -105,6 +109,7 @@ export function loadConfig(environment = process.env): AppConfig {
       databaseStatementTimeoutMs: "DATABASE_STATEMENT_TIMEOUT_MS",
       slowRequestMs: "SLOW_REQUEST_MS",
       sessionTtlSeconds: "SESSION_TTL_SECONDS",
+      traderSessionTtlSeconds: "TRADER_SESSION_TTL_SECONDS",
     };
     const environmentKey = ENV_KEYS[key] ?? key;
     if (key === "telegramBotToken") throw new Error("TELEGRAM_BOT_TOKEN must be the token @BotFather gave, like 123456:ABC-…");

@@ -31,6 +31,8 @@ export class Authentication {
       environment: process.env.NODE_ENV ?? "development",
     },
     private readonly telegramConfig: TelegramConfig | null = null,
+    /** Traders stay signed in this long after they last used the app (30 days by default). */
+    private readonly traderSessionTtlSeconds = 2592000,
   ) {
     if (
       !Number.isSafeInteger(sessionTtlSeconds) ||
@@ -39,14 +41,27 @@ export class Authentication {
     ) {
       throw new Error("SESSION_TTL_SECONDS must be between 60 and 2592000");
     }
+    if (
+      !Number.isSafeInteger(traderSessionTtlSeconds) ||
+      traderSessionTtlSeconds < 60 ||
+      traderSessionTtlSeconds > 31536000
+    ) {
+      throw new Error("TRADER_SESSION_TTL_SECONDS must be between 60 and 31536000");
+    }
   }
 
   getStore(): AuthStore {
     return this.store;
   }
 
+  /** Staff sessions: a fixed lifetime. */
   getSessionTtlSeconds(): number {
     return this.sessionTtlSeconds;
+  }
+
+  /** Trader sessions: renewed to this lifetime whenever the app checks in. */
+  getTraderSessionTtlSeconds(): number {
+    return this.traderSessionTtlSeconds;
   }
 
   getPhoneOtpConfig(): PhoneOtpConfig {

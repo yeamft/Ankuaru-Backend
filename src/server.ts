@@ -80,7 +80,7 @@ const app = createApp({
   }, config.telegramBotToken && config.telegramBotUsername
     // Telegram sign-in turns on once both the bot's token and username are set.
     ? { botToken: config.telegramBotToken, botUsername: config.telegramBotUsername }
-    : null),
+    : null, config.traderSessionTtlSeconds),
   environment: config.environment,
   allowDemoAuth: config.allowDemoAuth,
   realtime,
