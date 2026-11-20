@@ -4,9 +4,9 @@ import type { Database } from "../../../infrastructure/database/db.js";
 import { transaction } from "../../../infrastructure/database/index.js";
 import { newsPostEvents, newsPosts, resources } from "../../../infrastructure/database/schema.js";
 import { ApiError } from "../../../shared/errors.js";
-import { audit } from "../../admin/services/audit.service.js";
+import { isUuid } from "../../../shared/validation.js";
+import { audit } from "../../../infrastructure/database/index.js";
 
-const isUuid = (value: string) => z.string().uuid().safeParse(value).success;
 
 /* ------------------------------------------------------------------ */
 /* News readership                                                     */

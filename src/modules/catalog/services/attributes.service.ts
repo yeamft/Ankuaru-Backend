@@ -10,11 +10,10 @@ import {
   listingProperties,
 } from "../../../infrastructure/database/schema.js";
 import { ApiError } from "../../../shared/errors.js";
-import { audit } from "../../admin/services/audit.service.js";
+import { isUuid } from "../../../shared/validation.js";
+import { audit } from "../../../infrastructure/database/index.js";
 import { slugify } from "./catalog.service.js";
 
-const isUuid = (value: string) =>
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 
 export const INPUT_TYPES = ["select", "number", "text"] as const;
 

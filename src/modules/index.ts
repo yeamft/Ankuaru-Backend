@@ -10,6 +10,7 @@ import { createCatalogRoutes } from "./catalog/index.js";
 import { createContentRoutes } from "./content/index.js";
 import { createHealthRoutes } from "./health/index.js";
 import { createMarketplaceRoutes } from "./marketplace/index.js";
+import { createNotificationsRoutes } from "./notifications/index.js";
 import { createKycRoutes } from "./kyc/index.js";
 
 export type ModuleContext = {
@@ -38,6 +39,7 @@ export function createApiModules(context: ModuleContext): ApiModule[] {
     { path: "/api/content", router: createContentRoutes(database, guards) },
     { path: "/api/catalog", router: createCatalogRoutes(database, guards) },
     { path: "/api/admin", router: createAdminRoutes(database, guards, access) },
+    { path: "/api", router: createNotificationsRoutes(database, guards) },
     { path: "/api", router: createMarketplaceRoutes(database, guards) },
   ];
 }

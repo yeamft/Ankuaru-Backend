@@ -7,6 +7,7 @@ import { Authentication, PostgresAuthStore } from "./modules/auth/index.js";
 import { DEFAULT_EXCHANGE_RATE_URL, startExchangeRateSync } from "./modules/catalog/exchange-rate-sync.js";
 import { startLegacySync } from "./modules/legacy/sync.js";
 import { inquiryNotificationHandler } from "./modules/marketplace/index.js";
+import { notificationEventHandler } from "./modules/notifications/index.js";
 
 const config = loadConfig();
 const pool = createPool(config.databaseUrl, config.databasePoolSize, {
@@ -34,28 +35,36 @@ const cleanup = setInterval(
   60 * 60 * 1000,
 ).unref();
 
-// Keep pulling news, tenders, events, bank forex rates and listings (0 turns it off).
-const legacySyncMinutes = Number(process.env.LEGACY_SYNC_INTERVAL_MINUTES ?? 30);
-const legacySyncOn =
-  Number.isFinite(legacySyncMinutes) && legacySyncMinutes > 0 && config.environment !== "test";
-const stopLegacySync = legacySyncOn
-  ? startLegacySync(pool, database, legacySyncMinutes * 60_000)
-  : () => {};
-if (legacySyncOn) console.log(`Legacy sync every ${legacySyncMinutes} min`);
+const backgroundJobs = config.environment !== "test";
+
+// Pull news, tenders, events, bank forex rates and listings once a day (LEGACY_SYNC_TIME, Ethiopian time).
+const legacySyncAt = backgroundJobs ? config.legacySyncTime : null;
+const stopLegacySync = legacySyncAt ? startLegacySync(pool, database, legacySyncAt) : () => {};
+if (legacySyncAt) {
+  const time = `${String(legacySyncAt.hour).padStart(2, "0")}:${String(legacySyncAt.minute).padStart(2, "0")}`;
+  console.log(`Legacy sync daily at ${time} Ethiopian time`);
+}
 
 // Publish the National Bank of Ethiopia's daily USD → ETB rate (EXCHANGE_RATE_SYNC=off turns it off).
-const rateSyncOn = process.env.EXCHANGE_RATE_SYNC !== "off" && config.environment !== "test";
-const rateSide = (["weighted_average", "buying", "selling"] as const)
-  .find((side) => side === process.env.EXCHANGE_RATE_SIDE) ?? "weighted_average";
-const stopRateSync = rateSyncOn
-  ? startExchangeRateSync(database, process.env.EXCHANGE_RATE_URL || DEFAULT_EXCHANGE_RATE_URL, rateSide)
+const rateSync = backgroundJobs ? config.exchangeRateSync : null;
+const stopRateSync = rateSync
+  ? startExchangeRateSync(database, rateSync.url ?? DEFAULT_EXCHANGE_RATE_URL, rateSync.side)
   : () => {};
-if (rateSyncOn) console.log(`Daily NBE USD/ETB rate sync on (${rateSide})`);
+if (rateSync) console.log(`Daily NBE USD/ETB rate sync on (${rateSync.side})`);
 
 const realtime = new RealtimeHub();
 const stopListening = listenForEvents(
   { connectionString: config.databaseUrl },
-  inquiryNotificationHandler(database, realtime),
+  (() => {
+    const handlers = [
+      inquiryNotificationHandler(database, realtime),
+      notificationEventHandler(database, realtime),
+    ];
+    // Each handler ignores event types it does not own.
+    return async (payload: string) => {
+      await Promise.all(handlers.map((handle) => handle(payload)));
+    };
+  })(),
 );
 
 const app = createApp({
@@ -76,7 +85,7 @@ const app = createApp({
   allowDemoAuth: config.allowDemoAuth,
   realtime,
   slowRequestMs: config.slowRequestMs,
-  trustProxy: Number(process.env.TRUST_PROXY ?? 0) || 0,
+  trustProxy: config.trustProxy,
 });
 const server = app.listen(config.port, config.host, () => {
   console.log(`ANKUARU API listening on http://${config.host}:${config.port}`);

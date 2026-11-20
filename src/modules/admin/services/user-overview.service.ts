@@ -13,6 +13,7 @@ import {
   verificationRequests,
 } from "../../../infrastructure/database/schema.js";
 import { ApiError } from "../../../shared/errors.js";
+import { isLiveListing } from "../../marketplace/index.js";
 
 /**
  * Everything staff need about one trader in one place: profile and account,
@@ -77,7 +78,7 @@ export async function userOverview(database: Database, traderId: string) {
       database
         .select({
           total: sql<number>`count(*)::int`,
-          active: sql<number>`count(*) filter (where ${listings.status} in ('Active', 'Closing Soon'))::int`,
+          active: sql<number>`count(*) filter (where ${isLiveListing})::int`,
         })
         .from(listings)
         .where(eq(listings.ownerId, traderId))

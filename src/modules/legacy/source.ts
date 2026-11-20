@@ -1,7 +1,6 @@
 import { z } from "zod";
-import { normalizePhoneNumber } from "../auth/services/auth.service.js";
+import { normalizePhoneNumber } from "../auth/index.js";
 
-export const SOURCE = "legacy-ankuaru";
 export const DEFAULT_SINCE = "2026-10-01T00:00:00+03:00";
 export const CATEGORIES = [
   ["CoffeeandMainCommodity", "coffee"], ["BuildingMaterials", "building-materials"],
@@ -278,18 +277,69 @@ export function parseNews(value: unknown, since: string): LegacyNewsItem[] {
   return rows.map(row => presentNews(row));
 }
 
+/**
+ * Keeps this app from loading the legacy API: one request at a time per host,
+ * at least LEGACY_REQUEST_GAP_MS apart (default 1 s), and failures retried only
+ * after a pause (honouring Retry-After), never for a client error.
+ */
+/** Per host: when the last request started, and the queue later ones wait in. */
+const lastRequestAt = new Map<string, number>();
+const hostQueue = new Map<string, Promise<void>>();
+const RETRY_PAUSES_MS = [10_000, 30_000];
+const MAX_RETRY_AFTER_MS = 120_000;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const requestGapMs = () => {
+  const gap = Number(process.env.LEGACY_REQUEST_GAP_MS);
+  return Number.isFinite(gap) && gap >= 0 ? gap : 1_000;
+};
+
+/** Waits its turn for `host`, then until the quiet gap since the previous request has passed. */
+function paceRequest(host: string): Promise<void> {
+  const turn = (hostQueue.get(host) ?? Promise.resolve()).then(async () => {
+    const wait = (lastRequestAt.get(host) ?? 0) + requestGapMs() - Date.now();
+    if (wait > 0) await sleep(wait);
+    lastRequestAt.set(host, Date.now());
+  });
+  hostQueue.set(host, turn);
+  return turn;
+}
+
+/** Seconds or an HTTP date from Retry-After, capped; null when absent or unreadable. */
+function retryAfterMs(response: Response): number | null {
+  const header = response.headers.get("retry-after");
+  if (!header) return null;
+  const seconds = Number(header);
+  const ms = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(header) - Date.now();
+  return Number.isFinite(ms) ? Math.min(Math.max(ms, 0), MAX_RETRY_AFTER_MS) : null;
+}
+
+class ClientError extends Error {}
+
 export function httpsGet(base: URL, request: typeof fetch) {
   if (base.protocol !== "https:" || base.username || base.password) {
     throw new Error("Legacy API must use HTTPS without URL credentials");
   }
+  // Injected fetchers (tests) are not real network calls, so they are not paced.
+  const paced = request === globalThis.fetch;
   return async function get(path: string, origin = base, init: RequestInit = {}): Promise<unknown> {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    const url = new URL(path, origin);
+    for (let attempt = 0; ; attempt++) {
+      let pause: number | null = null;
       try {
-        const response = await request(new URL(path, origin), { ...init, signal: AbortSignal.timeout(30_000), redirect: "error" });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return await response.json();
-      } catch {
-        if (attempt === 2) throw new Error(`Legacy API read failed: ${path}`);
+        if (paced) await paceRequest(url.host);
+        const response = await request(url, { ...init, signal: AbortSignal.timeout(30_000), redirect: "error" });
+        if (response.ok) return await response.json();
+        // 4xx (other than "slow down") will not get better by asking again.
+        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+          throw new ClientError(`HTTP ${response.status}`);
+        }
+        pause = retryAfterMs(response);
+        throw new Error(`HTTP ${response.status}`);
+      } catch (error) {
+        if (error instanceof ClientError || attempt >= RETRY_PAUSES_MS.length) {
+          throw new Error(`Legacy API read failed: ${path}`);
+        }
+        if (paced) await sleep(pause ?? RETRY_PAUSES_MS[attempt]!);
       }
     }
   };

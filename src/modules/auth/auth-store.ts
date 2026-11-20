@@ -2,10 +2,12 @@ import { randomUUID } from "node:crypto";
 import { and, eq, gt, isNull, lte, sql } from "drizzle-orm";
 import type { Pool } from "pg";
 import { createDatabase, type Database } from "../../infrastructure/database/index.js";
-import { accounts, accountSessions, authRateLimits, legacyUsers, phoneOtpCodes, traders } from "../../infrastructure/database/schema.js";
+import { accounts, accountSessions, authRateLimits, legacyUsers, phoneOtpCodes, traders, userPreferences } from "../../infrastructure/database/schema.js";
 import { transaction, type DatabaseTransaction } from "../../infrastructure/database/transaction.js";
+import { isUniqueViolation } from "../../shared/db-errors.js";
 import { ApiError } from "../../shared/errors.js";
 import type { AccountRole } from "./permissions.js";
+import type { TRADER_STATUSES } from "./schemas.js";
 
 export type Account = {
   id: string;
@@ -20,7 +22,7 @@ export type Account = {
   role: "buyer" | "seller" | "both";
   account_role: AccountRole;
   verified: boolean;
-  status: "Active" | "Pending" | "Suspended";
+  status: (typeof TRADER_STATUSES)[number];
   /** Whether the trader has set a sign-in PIN yet. */
   has_pin: boolean;
 };
@@ -31,6 +33,20 @@ export type Registration = Pick<Account, "email" | "display_name" | "role"> & {
 };
 export type ProfileUpdate = Partial<Pick<Account, "display_name" | "role" | "city">>;
 export type NewSession = { tokenHash: string; expiresAt: Date };
+export type Preferences = {
+  language: "en" | "am";
+  currency: "USD" | "ETB";
+  notify_inquiries: boolean;
+  notify_listing_updates: boolean;
+  notify_market_news: boolean;
+};
+export const DEFAULT_PREFERENCES: Preferences = {
+  language: "en",
+  currency: "USD",
+  notify_inquiries: true,
+  notify_listing_updates: true,
+  notify_market_news: false,
+};
 /** An imported legacy profile that registering with its phone number will claim. */
 export type ClaimableProfile = { display_name: string; business_name: string | null; city: string | null };
 /** What a PIN sign-in needs to know about the account behind a phone number. */
@@ -68,7 +84,17 @@ export interface AuthStore {
   updateProfile(accountId: string, input: ProfileUpdate): Promise<Account | null>;
   changePassword(accountId: string, expectedHash: string, passwordHash: string): Promise<boolean>;
   consumeRateLimit(key: string): Promise<boolean>;
+  preferences(accountId: string): Promise<Preferences>;
+  updatePreferences(accountId: string, input: Partial<Preferences>): Promise<Preferences>;
 }
+
+const preferenceSelection = {
+  language: userPreferences.language,
+  currency: userPreferences.currency,
+  notify_inquiries: userPreferences.notifyInquiries,
+  notify_listing_updates: userPreferences.notifyListingUpdates,
+  notify_market_news: userPreferences.notifyMarketNews,
+};
 
 const accountSelection = {
   id: accounts.id,
@@ -169,15 +195,7 @@ export class PostgresAuthStore implements AuthStore {
         } as Account;
       });
     } catch (error) {
-      const dbError = error as { code?: string; constraint?: string; cause?: { code?: string; constraint?: string } };
-      if ((dbError.code ?? dbError.cause?.code) === "23505") {
-        const constraint = dbError.constraint ?? dbError.cause?.constraint;
-        if (
-          constraint === "accounts_email_key" ||
-          constraint === "accounts_pkey" ||
-          constraint === "traders_phone_key"
-        ) return null;
-      }
+      if (isUniqueViolation(error, ["accounts_email_key", "accounts_pkey", "traders_phone_key"])) return null;
       throw error;
     }
   }
@@ -367,6 +385,28 @@ export class PostgresAuthStore implements AuthStore {
     const [row] = await this.database.select(accountSelection).from(accounts)
       .innerJoin(traders, eq(traders.id, accounts.id)).where(eq(accounts.id, accountId));
     return (row as Account | undefined) ?? null;
+  }
+
+  async preferences(accountId: string): Promise<Preferences> {
+    const [row] = await this.database.select(preferenceSelection).from(userPreferences)
+      .where(eq(userPreferences.accountId, accountId));
+    return (row as Preferences | undefined) ?? { ...DEFAULT_PREFERENCES };
+  }
+
+  /** Saves the given fields; the first save fills the rest with defaults. */
+  async updatePreferences(accountId: string, input: Partial<Preferences>): Promise<Preferences> {
+    const changes = {
+      ...(input.language === undefined ? {} : { language: input.language }),
+      ...(input.currency === undefined ? {} : { currency: input.currency }),
+      ...(input.notify_inquiries === undefined ? {} : { notifyInquiries: input.notify_inquiries }),
+      ...(input.notify_listing_updates === undefined ? {} : { notifyListingUpdates: input.notify_listing_updates }),
+      ...(input.notify_market_news === undefined ? {} : { notifyMarketNews: input.notify_market_news }),
+    };
+    const [row] = await this.database.insert(userPreferences)
+      .values({ accountId, ...changes })
+      .onConflictDoUpdate({ target: userPreferences.accountId, set: { ...changes, updatedAt: new Date() } })
+      .returning(preferenceSelection);
+    return row as Preferences;
   }
 
   async changePassword(accountId: string, expectedHash: string, passwordHash: string) {

@@ -39,11 +39,6 @@ export function pageRequest(request: Request, keys: number): PageRequest {
   return { limit: size, after };
 }
 
-/** Bind values for a keyset condition: the cursor keys, or nulls on the first page. */
-export function cursorValues(page: PageRequest, keys: number): (string | null)[] {
-  return page.after ?? Array<null>(keys).fill(null);
-}
-
 const SORT_KEY = /^_k\d$/;
 
 /**

@@ -84,3 +84,17 @@ export const rolePermissions = pgTable("role_permissions", {
   primaryKey({ columns: [table.role, table.permission] }),
   check("role_permissions_role_check", sql`${table.role} in ('moderator', 'content_manager', 'platform_admin')`),
 ]);
+
+/** Per-account settings; a missing row means every default. */
+export const userPreferences = pgTable("user_preferences", {
+  accountId: text("account_id").primaryKey().references(() => accounts.id, { onDelete: "cascade" }),
+  language: text("language").notNull().default("en"),
+  currency: text("currency").notNull().default("USD"),
+  notifyInquiries: boolean("notify_inquiries").notNull().default(true),
+  notifyListingUpdates: boolean("notify_listing_updates").notNull().default(true),
+  notifyMarketNews: boolean("notify_market_news").notNull().default(false),
+  updatedAt: updatedAt(),
+}, (table) => [
+  check("user_preferences_language_check", sql`${table.language} in ('en', 'am')`),
+  check("user_preferences_currency_check", sql`${table.currency} in ('USD', 'ETB')`),
+]);

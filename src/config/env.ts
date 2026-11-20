@@ -22,6 +22,30 @@ export type AppConfig = {
   geezShortcodeId?: string;
   telegramBotToken?: string;
   telegramBotUsername?: string;
+  /** Trust X-Forwarded-For from this many proxies; 0 trusts none. */
+  trustProxy: number;
+  /** Minutes between legacy-site syncs; 0 turns the sync off. */
+  /** When the daily legacy sync runs (Ethiopian time); null turns it off. */
+  legacySyncTime: { hour: number; minute: number } | null;
+  /** The daily NBE USD → ETB rate sync; null when EXCHANGE_RATE_SYNC=off. */
+  exchangeRateSync: { url?: string; side: ExchangeRateSide } | null;
+};
+
+export const EXCHANGE_RATE_SIDES = ["weighted_average", "buying", "selling"] as const;
+export type ExchangeRateSide = (typeof EXCHANGE_RATE_SIDES)[number];
+
+/** A non-negative number from the environment; missing or unreadable values fall back. */
+/** LEGACY_SYNC_TIME: "HH:MM" in Ethiopian time (default midnight), or "off". */
+function legacySyncTime(value: string | undefined) {
+  if (value?.trim().toLowerCase() === "off") return null;
+  const match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec((value ?? "00:00").trim());
+  if (!match) throw new Error('LEGACY_SYNC_TIME must be a 24-hour time like "00:00", or "off"');
+  return { hour: Number(match[1]), minute: Number(match[2]) };
+}
+
+const lenientNumber = (value: string | undefined, fallback: number) => {
+  const number = Number(value ?? fallback);
+  return Number.isFinite(number) && number > 0 ? number : 0;
 };
 
 const integerSetting = (name: string, fallback: number) => z.preprocess(
@@ -87,5 +111,16 @@ export function loadConfig(environment = process.env): AppConfig {
     if (key === "telegramBotUsername") throw new Error("TELEGRAM_BOT_USERNAME must be the bot's username, like ankuaru_bot");
     throw new Error(issue?.message.includes("required") ? issue.message : `${environmentKey} must be a positive integer`);
   }
-  return parsed.data;
+  const side = EXCHANGE_RATE_SIDES.find((choice) => choice === environment.EXCHANGE_RATE_SIDE);
+  return {
+    ...parsed.data,
+    trustProxy: lenientNumber(environment.TRUST_PROXY, 0),
+    legacySyncTime: legacySyncTime(environment.LEGACY_SYNC_TIME),
+    exchangeRateSync: environment.EXCHANGE_RATE_SYNC === "off"
+      ? null
+      : {
+          ...(environment.EXCHANGE_RATE_URL ? { url: environment.EXCHANGE_RATE_URL } : {}),
+          side: side ?? "weighted_average",
+        },
+  };
 }

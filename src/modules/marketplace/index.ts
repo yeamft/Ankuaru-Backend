@@ -6,10 +6,10 @@ export {
 export { parseTelegramListing } from "./services/telegram-parser.js";
 export { createListing } from "./services/listings.service.js";
 export {
-  INQUIRY_COLUMNS,
   INQUIRY_STATUSES,
-  LISTING_COLUMNS,
-  LIVE_LISTING,
-  isUuid,
+  LISTING_STATUSES,
+  LIVE_LISTING_STATUSES,
+  isLiveListing,
+  type ListingStatus,
 } from "./records.js";
 export type { Inquiry } from "./records.js";

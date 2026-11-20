@@ -4,11 +4,8 @@ import { inquiries, inquiryEvents, listings, traders } from "../../../infrastruc
 import { transaction } from "../../../infrastructure/database/index.js";
 import { ApiError } from "../../../shared/errors.js";
 import type { PageRequest } from "../../../shared/pagination.js";
-import {
-  INQUIRY_STATUSES,
-  isUuid,
-  type Inquiry,
-} from "../records.js";
+import { isUuid } from "../../../shared/validation.js";
+import { isLiveListing, type Inquiry } from "../records.js";
 import { inquiryMessageSchema, inquiryStatusSchema } from "../schemas.js";
 import { notifyInquiryCreated } from "./inquiry-events.service.js";
 
@@ -62,7 +59,7 @@ export async function createInquiry(
       owner_role: traders.role,
     })
       .from(listings).innerJoin(traders, eq(traders.id, listings.ownerId))
-      .where(and(eq(listings.id, listingId), sql`${listings.status} in ('Active', 'Closing Soon')`));
+      .where(and(eq(listings.id, listingId), isLiveListing));
     const sellerId = listing?.owner_id;
     if (!sellerId) throw new ApiError(404, "listing_not_found", "Listing not found.");
     if (
@@ -126,7 +123,7 @@ export async function updateInquiryStatus(
     throw new ApiError(403, "verification_required", "Verify your identity and phone before negotiating.");
   }
   const parsedStatus = inquiryStatusSchema.safeParse(body.status);
-  if (!parsedStatus.success || !INQUIRY_STATUSES.includes(parsedStatus.data)) {
+  if (!parsedStatus.success) {
     throw new ApiError(400, "invalid_inquiry_status", "Choose a valid inquiry status.");
   }
   const status = parsedStatus.data;

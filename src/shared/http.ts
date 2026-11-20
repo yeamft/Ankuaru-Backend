@@ -1,4 +1,5 @@
 import type { ErrorRequestHandler, RequestHandler } from "express";
+import { rootCause, type ErrorLike } from "./db-errors.js";
 import { ApiError } from "./errors.js";
 
 // PostgreSQL rejects malformed timestamps or UUIDs from cursors and paths.
@@ -23,19 +24,6 @@ const UNAVAILABLE_CODES = new Set([
 const UNAVAILABLE_MESSAGE = /connection (terminated|timeout)|timeout exceeded when trying to connect|Connection terminated unexpectedly/i;
 /** Postgres cancelled a statement that ran past statement_timeout. */
 const QUERY_CANCELED = "57014";
-
-type ErrorLike = { name?: string; code?: string; message?: string; cause?: unknown };
-
-/**
- * The innermost error: Drizzle wraps the driver's error ("Failed query: …")
- * and keeps the real one, with its SQLSTATE code, in `cause`.
- */
-export function rootCause(error: unknown): ErrorLike {
-  let current = error as ErrorLike;
-  for (let depth = 0; depth < 5 && current?.cause && typeof current.cause === "object"; depth += 1)
-    current = current.cause as ErrorLike;
-  return current ?? {};
-}
 
 const isUnavailable = (cause: ErrorLike) =>
   (cause.code !== undefined && UNAVAILABLE_CODES.has(cause.code)) ||

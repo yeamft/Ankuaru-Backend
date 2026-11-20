@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, randomInt } from "node:crypto";
 import type { Request } from "express";
 import type { Account, AuthStore, ProfileUpdate } from "../auth-store.js";
 import type { PhoneOtpConfig } from "../auth.js";
+import { isUniqueViolation } from "../../../shared/db-errors.js";
 import { ApiError } from "../../../shared/errors.js";
 import { hashPassword, verifyPassword } from "../password.js";
 import {
@@ -11,6 +12,7 @@ import {
   emailSchema,
   passwordSchema,
   phoneInputSchema,
+  preferencesBodySchema,
   recordObjectSchema,
   traderRoleSchema,
 } from "../schemas.js";
@@ -25,10 +27,6 @@ export function bearerToken(request: Request): string | null {
 
 export function invalid(message: string): never {
   throw new ApiError(400, "invalid_account_input", message);
-}
-
-export function objectBody(value: unknown, keys: string[]): Record<string, unknown> {
-  return parseBody(value, recordObjectSchema(keys));
 }
 
 export function parseBody(value: unknown, schema: ReturnType<typeof recordObjectSchema>): Record<string, unknown> {
@@ -113,15 +111,26 @@ function otpDigest(phone: string, code: string, secret: string) {
   return createHmac("sha256", secret).update(`${phone}:${code}`).digest("hex");
 }
 
+const isLocal = (config: PhoneOtpConfig) =>
+  config.environment === "development" || config.environment === "test";
+
+/** The configured OTP secret; local work falls back to a fixed one, production gets "". */
+function otpSecretFor(config: PhoneOtpConfig) {
+  return config.secret ?? (isLocal(config) ? "ankuaru-local-development-otp-secret" : "");
+}
+
+function otpCode(value: unknown): string {
+  if (typeof value !== "string" || !/^\d{6}$/.test(value)) invalid("Enter the 6-digit phone verification code.");
+  return value;
+}
+
 export async function requestPhoneOtp(
   store: AuthStore,
   value: unknown,
   config: PhoneOtpConfig,
 ) {
   const phone = normalizePhoneNumber(value);
-  const secret = config.secret ?? (config.environment === "development" || config.environment === "test"
-    ? "ankuaru-local-development-otp-secret"
-    : "");
+  const secret = otpSecretFor(config);
   const hasGateway = Boolean(config.geezToken || (config.smsUrl && config.smsToken));
   if (!secret || (config.environment === "production" && !hasGateway)) {
     throw new ApiError(503, "phone_otp_unavailable", "Phone verification is not configured. Contact support.");
@@ -159,7 +168,7 @@ export async function requestPhoneOtp(
       await store.deletePhoneOtp(phone);
       throw new ApiError(502, "phone_otp_delivery_failed", "We could not send your code. Try again shortly.");
     }
-  } else if (!["development", "test"].includes(config.environment)) {
+  } else if (!isLocal(config)) {
     await store.deletePhoneOtp(phone);
     throw new ApiError(503, "phone_otp_unavailable", "Phone verification is not configured. Contact support.");
   }
@@ -168,21 +177,8 @@ export async function requestPhoneOtp(
     phone,
     expires_at: expiresAt,
     // Shown on screen only for local work without an SMS service; with one, the code goes by SMS only.
-    ...((config.environment === "development" || config.environment === "test") && !hasGateway
-      ? { development_code: code }
-      : {}),
+    ...(isLocal(config) && !hasGateway ? { development_code: code } : {}),
   };
-}
-
-function otpSecretFor(config: PhoneOtpConfig) {
-  return config.secret ?? (config.environment === "development" || config.environment === "test"
-    ? "ankuaru-local-development-otp-secret"
-    : "");
-}
-
-function otpCode(value: unknown): string {
-  if (typeof value !== "string" || !/^\d{6}$/.test(value)) invalid("Enter the 6-digit phone verification code.");
-  return value;
 }
 
 export async function verifyAccountPhoneOtp(
@@ -192,24 +188,15 @@ export async function verifyAccountPhoneOtp(
   config: PhoneOtpConfig,
 ) {
   const phone = normalizePhoneNumber(body.phone);
-  if (typeof body.phone_otp !== "string" || !/^\d{6}$/.test(body.phone_otp)) {
-    invalid("Enter the 6-digit phone verification code.");
-  }
-  const secret = config.secret ?? (config.environment === "development" || config.environment === "test"
-    ? "ankuaru-local-development-otp-secret"
-    : "");
+  const code = otpCode(body.phone_otp);
+  const secret = otpSecretFor(config);
   if (!secret) throw new ApiError(503, "phone_otp_unavailable", "Phone verification is not configured.");
   try {
-    const verified = await store.verifyPhoneForAccount(
-      accountId,
-      phone,
-      otpDigest(phone, body.phone_otp, secret),
-    );
+    const verified = await store.verifyPhoneForAccount(accountId, phone, otpDigest(phone, code, secret));
     if (!verified) throw new ApiError(400, "phone_verification_failed", "The phone code is invalid or expired. Request a new code.");
     return phone;
   } catch (error) {
-    const dbError = error as { code?: string; constraint?: string; cause?: { code?: string; constraint?: string } };
-    if ((dbError.code ?? dbError.cause?.code) === "23505" && (dbError.constraint ?? dbError.cause?.constraint) === "traders_phone_key") {
+    if (isUniqueViolation(error, ["traders_phone_key"])) {
       throw new ApiError(409, "phone_already_in_use", "This phone number is already linked to another account.");
     }
     throw error;
@@ -379,6 +366,20 @@ export async function updateAccount(
   const updated = await store.updateProfile(user.id, update);
   if (!updated) throw new ApiError(401, "unauthorized", "A valid session is required.");
   return { user: publicAccount(updated) };
+}
+
+/** Applies a partial preferences update for the signed-in account. */
+export async function updatePreferences(store: AuthStore, user: Account, value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) invalid("A JSON object is required.");
+  const parsed = preferencesBodySchema.safeParse(value);
+  if (!parsed.success) {
+    const unsupported = parsed.error.issues.some((issue) => issue.code === "unrecognized_keys");
+    invalid(unsupported
+      ? "The request contains unsupported fields."
+      : "Language must be en or am, currency USD or ETB, and notification settings true or false.");
+  }
+  if (Object.keys(parsed.data).length === 0) invalid("Provide at least one preference to change.");
+  return { preferences: await store.updatePreferences(user.id, parsed.data) };
 }
 
 export async function changePassword(

@@ -99,21 +99,41 @@ export function describeLegacySync(result: LegacySyncResult): string {
   if (result.listings) {
     parts.push(
       `${result.listings.usersInserted} profiles and ${result.listings.listingsInserted} listings added, ` +
-      `${result.listings.listingsUpdated} listings reopened/closed`,
+      `${result.listings.listingsUpdated} listings reopened/closed` +
+      (result.listings.skipped.length ? `, ${result.listings.skipped.length} offers skipped` : ""),
     );
   }
   return parts.join("; ") || "nothing synced";
 }
 
+/** A time of day in Ethiopia (East Africa Time, UTC+3 all year, no daylight saving). */
+export type DailyTime = { hour: number; minute: number };
+const EAT_OFFSET_MS = 3 * 60 * 60_000;
+
+/** Parses "HH:MM" (24-hour); null for anything else. */
+export function parseDailyTime(value: string): DailyTime | null {
+  const match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(value.trim());
+  return match ? { hour: Number(match[1]), minute: Number(match[2]) } : null;
+}
+
+/** The next moment after `now` when it is `at` in Ethiopia. */
+export function nextDailyRun(at: DailyTime, now = new Date()): Date {
+  const local = new Date(now.getTime() + EAT_OFFSET_MS);
+  const target = Date.UTC(
+    local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), at.hour, at.minute,
+  ) - EAT_OFFSET_MS;
+  return new Date(target > now.getTime() ? target : target + 24 * 60 * 60_000);
+}
+
 /**
- * Re-runs the sync on an interval inside the API process. A Postgres session lock
- * keeps several API instances from syncing at the same time, and a run is skipped
- * while the previous one is still going.
+ * Runs the sync once a day at `at` (Ethiopian time) inside the API process. A
+ * Postgres session lock keeps several API instances from syncing at the same
+ * time, and a run is skipped while the previous one is still going.
  */
 export function startLegacySync(
   pool: Pool,
   database: Database,
-  intervalMs: number,
+  at: DailyTime,
   options = legacySyncOptions(),
 ): () => void {
   let running = false;
@@ -135,6 +155,7 @@ export function startLegacySync(
         const seconds = ((Date.now() - started) / 1000).toFixed(1);
         console.log(`Legacy sync (${seconds}s): ${describeLegacySync(result)}`);
         for (const error of result.errors) console.error(`Legacy sync failed for ${error}`);
+        for (const reason of result.listings?.skipped ?? []) console.warn(`Legacy offer skipped: ${reason}`);
       } finally {
         await client.query("select pg_advisory_unlock(hashtext('legacy-ankuaru-sync'))");
       }
@@ -146,14 +167,20 @@ export function startLegacySync(
     }
   };
 
-  // First pass shortly after startup so it does not compete with boot.
-  const first = setTimeout(() => void tick(), 15_000);
-  const timer = setInterval(() => void tick(), intervalMs);
-  first.unref();
-  timer.unref();
+  // Re-planned after every run, so the clock time holds rather than drifting.
+  let timer: NodeJS.Timeout | undefined;
+  const schedule = () => {
+    if (stopped) return;
+    const next = nextDailyRun(at);
+    timer = setTimeout(() => {
+      void tick().finally(schedule);
+    }, next.getTime() - Date.now());
+    timer.unref();
+    console.log(`Next legacy sync at ${next.toISOString()}`);
+  };
+  schedule();
   return () => {
     stopped = true;
-    clearTimeout(first);
-    clearInterval(timer);
+    clearTimeout(timer);
   };
 }

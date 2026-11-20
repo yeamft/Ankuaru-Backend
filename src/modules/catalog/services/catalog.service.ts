@@ -9,7 +9,7 @@ import {
   listings,
 } from "../../../infrastructure/database/schema.js";
 import { ApiError } from "../../../shared/errors.js";
-import { audit } from "../../admin/services/audit.service.js";
+import { audit } from "../../../infrastructure/database/index.js";
 
 /** "White Sesame (Humera)" → "white-sesame-humera". */
 export function slugify(text: string) {

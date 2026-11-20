@@ -93,13 +93,24 @@ function listingValues(offer: LegacyOffer, owner: LegacyUser) {
   };
 }
 
-/** Imports source records once. Reruns only add previously unseen users and offers. */
+/**
+ * Imports source records once. Reruns only add previously unseen users and offers.
+ * An offer that cannot be attributed or read (say, two legacy users share its
+ * Telegram chat) is skipped and reported instead of blocking every other offer;
+ * it is retried on each run until the source is fixed.
+ */
 export async function importLegacyData(database: Database, data: LegacyData) {
   if (!Number.isFinite(Date.parse(data.since))) throw new Error("Invalid migration cutoff");
   const byChat = ownerMap(data.users);
-  const resolvedOffers = data.offers.map((offer) => {
-    const owner = resolveOwner(offer, data.users, byChat);
-    return { offer, owner, values: listingValues(offer, owner) };
+  const skipped: string[] = [];
+  const resolvedOffers = data.offers.flatMap((offer) => {
+    try {
+      const owner = resolveOwner(offer, data.users, byChat);
+      return [{ offer, owner, values: listingValues(offer, owner) }];
+    } catch (error) {
+      skipped.push(error instanceof Error ? error.message : String(error));
+      return [];
+    }
   });
   const phoneCounts = new Map<string, number>();
   for (const user of data.users) {
@@ -216,6 +227,7 @@ export async function importLegacyData(database: Database, data: LegacyData) {
       listingsUpdated,
       usersSeen: data.users.length,
       offersSeen: data.offers.length,
+      skipped,
     };
   });
 }

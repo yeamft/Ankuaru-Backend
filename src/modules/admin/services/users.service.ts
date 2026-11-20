@@ -15,11 +15,12 @@ import {
   traders,
   verificationRequests,
 } from "../../../infrastructure/database/schema.js";
+import { isUniqueViolation } from "../../../shared/db-errors.js";
 import { ApiError } from "../../../shared/errors.js";
 import type { PageRequest } from "../../../shared/pagination.js";
-import { normalizePhoneNumber } from "../../auth/services/auth.service.js";
-import type { AccountRole } from "../../auth/permissions.js";
-import { audit } from "./audit.service.js";
+import { normalizePhoneNumber, type AccountRole } from "../../auth/index.js";
+import { isLiveListing } from "../../marketplace/index.js";
+import { audit } from "../../../infrastructure/database/index.js";
 import {
   adminGrantSchema,
   adminUserCreateSchema,
@@ -46,7 +47,7 @@ const activeCounts = (database: Database) =>
       count: sql<number>`count(*)::int`.as("active_listings"),
     })
     .from(listings)
-    .where(sql`${listings.status} in ('Active', 'Closing Soon')`)
+    .where(isLiveListing)
     .groupBy(listings.ownerId)
     .as("active_counts");
 
@@ -130,7 +131,7 @@ export async function unclaimedProfileSummary(database: Database) {
     .leftJoin(accounts, eq(accounts.id, traders.id))
     .leftJoin(listings, and(
       eq(listings.ownerId, traders.id),
-      sql`${listings.status} in ('Active', 'Closing Soon')`,
+      isLiveListing,
     ))
     .where(isNull(accounts.id));
   return summary;
@@ -147,7 +148,7 @@ async function findUser(client: Database | DatabaseTransaction, userId: string) 
       verified: traders.verified,
       status: traders.status,
       created_at: accounts.createdAt,
-      active_listings: sql<number>`(select count(*)::int from ${listings} where ${listings.ownerId} = ${accounts.id} and ${listings.status} in ('Active', 'Closing Soon'))`,
+      active_listings: sql<number>`(select count(*)::int from ${listings} where ${listings.ownerId} = ${accounts.id} and ${isLiveListing})`,
       last_sign_in_at: sql<Date | null>`(select max(${accountSessions.createdAt}) from ${accountSessions} where ${accountSessions.accountId} = ${accounts.id})`,
     })
     .from(accounts)
@@ -199,22 +200,13 @@ export async function createUser(
       return findUser(tx, id);
     });
   } catch (error) {
-    const dbError = error as {
-      code?: string;
-      constraint?: string;
-      cause?: { code?: string; constraint?: string };
-    };
-    if (
-      (dbError.code ?? dbError.cause?.code) === "23505" &&
-      (dbError.constraint ?? dbError.cause?.constraint) === "traders_phone_key"
-    ) {
+    if (isUniqueViolation(error, ["traders_phone_key"])) {
       throw new ApiError(409, "account_exists", "An account with this phone number already exists.");
     }
     throw error;
   }
 }
 
-/** Locks the active administrators and refuses a change that would leave none. */
 /**
  * Refuses a change that would leave no active super admin, the only role that
  * can grant staff access. Call before demoting or suspending `userId`.
@@ -374,8 +366,7 @@ export async function setLegacyClaimPhone(
       return { id: traderId, claim_phone: phone, claim_blocked: false, status: profile?.status ?? null };
     });
   } catch (error) {
-    const dbError = error as { code?: string; cause?: { code?: string } };
-    if ((dbError.code ?? dbError.cause?.code) === "23505")
+    if (isUniqueViolation(error))
       throw new ApiError(409, "claim_phone_in_use", "Another unclaimed profile already uses that number.");
     throw error;
   }

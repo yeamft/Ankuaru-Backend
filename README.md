@@ -56,16 +56,23 @@ src/
   app.ts                    Express wiring: middleware and module routes only
   config/env.ts             Environment variables -> typed config
   infrastructure/
-    database/               Pool, transactions, migration runner
+    database/               Pool, schema, transactions, migration runner, audit writer
     realtime/               Per-process event hub and the LISTEN/NOTIFY connection
-  shared/                   Errors, HTTP error handling, pagination, input helpers
+  shared/                   Errors, HTTP error handling, DB error helpers, pagination, input helpers
+  cli/                      Seed, reset-password and import scripts (npm run …)
   modules/
     auth/                   Accounts and sessions; guards.ts protects other modules' routes
     marketplace/            Listings, inquiries, Telegram imports, inquiry events
-    admin/                  Moderation, verification, settings, audit trail
+    catalog/                Products, attributes, reference prices, bank forex, NBE rate sync
+    content/                News, tenders, events, resources, submissions
+    kyc/                    Trader verification applications
+    admin/                  Moderation, users, roles, analytics, settings
+    legacy/                 Import and periodic sync from the legacy site
     events/                 GET /api/events stream
     health/                 GET /api/health
 ```
+
+Modules import each other only through their `index.ts`.
 
 Each module follows the same pattern:
 
@@ -125,9 +132,9 @@ is a `telegra.ph` page. The importer validates every source response before
 writing and can be rerun safely: it adds unseen records without replacing
 profiles, listings, news posts, or activity already present on this site.
 
-The API server also keeps the site in sync automatically: every
-`LEGACY_SYNC_INTERVAL_MINUTES` (default 30; `0` disables it) it imports new
-posts and listings using the same settings. UserService news already imported is not
+The API server also keeps the site in sync automatically: once a day at
+`LEGACY_SYNC_TIME` in Ethiopian time (default `00:00`, midnight; `off` disables
+it) it imports new posts and listings using the same settings. UserService news already imported is not
 re-read; run `npm run legacy:import -- --recheck-news` to re-read that feed and
 refresh their news/tender/event classification. When an offer is closed,
 hidden, or reopened on the legacy site, the matching listing here follows it

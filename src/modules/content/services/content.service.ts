@@ -4,8 +4,9 @@ import type { Database } from "../../../infrastructure/database/db.js";
 import { transaction } from "../../../infrastructure/database/index.js";
 import { exchangeRates, newsPosts, traders } from "../../../infrastructure/database/schema.js";
 import { ApiError } from "../../../shared/errors.js";
+import { isUuid, parse } from "../../../shared/validation.js";
 import type { PageRequest } from "../../../shared/pagination.js";
-import { audit } from "../../admin/services/audit.service.js";
+import { audit } from "../../../infrastructure/database/index.js";
 import { contentSubmissionSchema, exchangeRateSchema, newsPostEditSchema, newsPostSchema, postKindSchema, postStatusSchema, type PostKind } from "../schemas.js";
 
 const postProjection = {
@@ -58,17 +59,8 @@ const detailValues = (
   linkUrl: post.link_url,
 });
 
-function parsed<T extends z.ZodType>(schema: T, value: unknown, code: string): z.output<T> {
-  const result = schema.safeParse(value);
-  if (!result.success) {
-    const message = result.error.issues[0]?.message ?? "The submitted content is invalid.";
-    throw new ApiError(400, code, message);
-  }
-  return result.data;
-}
-
 function requireUuid(id: string) {
-  if (!z.string().uuid().safeParse(id).success) {
+  if (!isUuid(id)) {
     throw new ApiError(400, "invalid_content_id", "The content ID is not valid.");
   }
 }
@@ -169,7 +161,7 @@ export async function listMySubmissions(database: Database, userId: string) {
 }
 
 export async function submitContent(database: Database, userId: string, input: unknown) {
-  const post = parsed(contentSubmissionSchema, input, "invalid_content_submission");
+  const post = parse(contentSubmissionSchema, input, "invalid_content_submission");
   return transaction(database, async (tx) => {
     const [row] = await tx.insert(newsPosts).values({
       title: post.title,
@@ -193,7 +185,7 @@ export async function submitContent(database: Database, userId: string, input: u
 }
 
 export async function createPost(database: Database, adminId: string, input: unknown) {
-  const post = parsed(newsPostSchema, input, "invalid_news_post");
+  const post = parse(newsPostSchema, input, "invalid_news_post");
   return transaction(database, async (tx) => {
     const [row] = await tx.insert(newsPosts).values({
       title: post.title,
@@ -218,7 +210,7 @@ export async function createPost(database: Database, adminId: string, input: unk
 /** Replaces a post's content (title, text, image, details); its status is left as it is. */
 export async function updatePost(database: Database, adminId: string, id: string, input: unknown) {
   requireUuid(id);
-  const post = parsed(newsPostEditSchema, input, "invalid_news_post");
+  const post = parse(newsPostEditSchema, input, "invalid_news_post");
   return transaction(database, async (tx) => {
     const [current] = await tx.select({ submittedBy: newsPosts.submittedBy })
       .from(newsPosts).where(eq(newsPosts.id, id)).for("update");
@@ -248,7 +240,7 @@ export async function updatePost(database: Database, adminId: string, id: string
 
 export async function updatePostStatus(database: Database, adminId: string, id: string, input: unknown) {
   requireUuid(id);
-  const { status } = parsed(postStatusSchema, input, "invalid_news_status");
+  const { status } = parse(postStatusSchema, input, "invalid_news_status");
   return transaction(database, async (tx) => {
     const [row] = await tx.update(newsPosts).set({
       status,
@@ -283,7 +275,7 @@ export async function listExchangeRates(database: Database) {
 }
 
 export async function createExchangeRate(database: Database, adminId: string, input: unknown) {
-  const rate = parsed(exchangeRateSchema, input, "invalid_exchange_rate");
+  const rate = parse(exchangeRateSchema, input, "invalid_exchange_rate");
   return transaction(database, async (tx) => {
     const [row] = await tx.insert(exchangeRates).values({
       baseCurrency: rate.base_currency,

@@ -53,6 +53,8 @@ export function createAuthRoutes(auth: Authentication): Router {
   router.post("/login", expensive, work(controller.login));
   router.get("/me", controller.me);
   router.patch("/me", controller.updateMe);
+  router.get("/me/preferences", controller.preferences);
+  router.patch("/me/preferences", controller.updatePreferences);
   router.post("/logout", controller.logout);
   router.post("/password", expensive, work(controller.changePasswordRoute));
 

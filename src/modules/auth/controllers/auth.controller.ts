@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import { ApiError } from "../../../shared/errors.js";
+import type { Account } from "../auth-store.js";
 import type { Authentication } from "../auth.js";
 import {
   bearerToken,
@@ -15,6 +16,7 @@ import {
   requestPhoneOtp,
   verifyAccountPhoneOtp,
   updateAccount,
+  updatePreferences,
 } from "../services/auth.service.js";
 import {
   loginBodySchema,
@@ -26,48 +28,57 @@ import {
   profileBodySchema,
 } from "../schemas.js";
 
+type SignIn = { user: Account; accessToken: string; expiresAt: Date };
+
+/** The body every sign-in route answers with. */
+const sessionBody = (result: SignIn) => ({
+  user: result.user,
+  access_token: result.accessToken,
+  token_type: "Bearer",
+  expires_at: result.expiresAt.toISOString(),
+});
+
 export function createAuthController(auth: Authentication) {
   const store = auth.getStore();
   const ttlSeconds = auth.getSessionTtlSeconds();
+
+  async function requireAccount(request: Request): Promise<Account> {
+    const account = await auth.authenticate(request);
+    if (!account) throw new ApiError(401, "unauthorized", "A valid session is required.");
+    return account;
+  }
+
+  /** Spends one attempt from the caller's per-IP budget for `scope`; 429 when it is used up. */
+  async function rateLimit(request: Request, response: Response, scope: string, message: string) {
+    const key = digestToken(`${scope}:${request.ip ?? "unknown"}`);
+    if (!(await store.consumeRateLimit(key))) {
+      response.set("Retry-After", "900");
+      throw new ApiError(429, "too_many_attempts", message);
+    }
+  }
 
   return {
     /** Traders sign in (or, the first time, get an account) with a phone code. */
     async phoneLogin(request: Request, response: Response) {
       const body = parseBody(request.body, phoneOtpConfirmBodySchema);
       const result = await phoneLogin(store, body, ttlSeconds, auth.getPhoneOtpConfig());
-      response.status(result.created ? 201 : 200).json({
-        user: result.user,
-        access_token: result.accessToken,
-        token_type: "Bearer",
-        expires_at: result.expiresAt.toISOString(),
-      });
+      response.status(result.created ? 201 : 200).json(sessionBody(result));
     },
 
     /** Whether a number signs in with its PIN or needs an SMS code first. */
     async phoneMethod(request: Request, response: Response) {
       const body = parseBody(request.body, phoneOtpBodySchema);
-      const key = digestToken(`phone-method:${request.ip ?? "unknown"}`);
-      if (!(await store.consumeRateLimit(key))) {
-        response.set("Retry-After", "900");
-        throw new ApiError(429, "too_many_attempts", "Too many attempts. Try again later.");
-      }
+      await rateLimit(request, response, "phone-method", "Too many attempts. Try again later.");
       response.json(await phoneSignInMethod(store, body));
     },
 
     async pinLogin(request: Request, response: Response) {
       const body = parseBody(request.body, pinLoginBodySchema);
-      const result = await pinLogin(store, body, ttlSeconds);
-      response.json({
-        user: result.user,
-        access_token: result.accessToken,
-        token_type: "Bearer",
-        expires_at: result.expiresAt.toISOString(),
-      });
+      response.json(sessionBody(await pinLogin(store, body, ttlSeconds)));
     },
 
     async setPin(request: Request, response: Response) {
-      const account = await auth.authenticate(request);
-      if (!account) throw new ApiError(401, "unauthorized", "A valid session is required.");
+      const account = await requireAccount(request);
       const body = parseBody(request.body, pinBodySchema);
       await setAccountPin(store, account, body);
       response.json({ user: publicAccount({ ...account, has_pin: true }) });
@@ -75,11 +86,7 @@ export function createAuthController(auth: Authentication) {
 
     async requestPhoneCode(request: Request, response: Response) {
       const body = parseBody(request.body, phoneOtpBodySchema);
-      const key = digestToken(`phone-otp:${request.ip ?? "unknown"}`);
-      if (!(await store.consumeRateLimit(key))) {
-        response.set("Retry-After", "900");
-        throw new ApiError(429, "too_many_attempts", "Too many code requests. Try again later.");
-      }
+      await rateLimit(request, response, "phone-otp", "Too many code requests. Try again later.");
       const result = await requestPhoneOtp(store, body.phone, auth.getPhoneOtpConfig());
       response.json({
         phone: result.phone,
@@ -89,38 +96,35 @@ export function createAuthController(auth: Authentication) {
     },
 
     async verifyPhoneCode(request: Request, response: Response) {
-      const account = await auth.authenticate(request);
-      if (!account) throw new ApiError(401, "unauthorized", "A valid session is required.");
+      const account = await requireAccount(request);
       const body = parseBody(request.body, phoneOtpConfirmBodySchema);
       await verifyAccountPhoneOtp(store, account.id, body, auth.getPhoneOtpConfig());
-      const updated = await auth.authenticate(request);
-      if (!updated) throw new ApiError(401, "unauthorized", "A valid session is required.");
-      response.json({ user: publicAccount(updated) });
+      response.json({ user: publicAccount(await requireAccount(request)) });
     },
 
     async login(request: Request, response: Response) {
       const body = parseBody(request.body, loginBodySchema);
-      const result = await loginAccount(store, body, ttlSeconds);
-      response.json({
-        user: result.user,
-        access_token: result.accessToken,
-        token_type: "Bearer",
-        expires_at: result.expiresAt.toISOString(),
-      });
+      response.json(sessionBody(await loginAccount(store, body, ttlSeconds)));
     },
 
     async me(request: Request, response: Response) {
-      const account = await auth.authenticate(request);
-      if (!account) throw new ApiError(401, "unauthorized", "A valid session is required.");
-      response.json({ user: publicAccount(account) });
+      response.json({ user: publicAccount(await requireAccount(request)) });
     },
 
     async updateMe(request: Request, response: Response) {
-      const account = await auth.authenticate(request);
-      if (!account) throw new ApiError(401, "unauthorized", "A valid session is required.");
+      const account = await requireAccount(request);
       const body = parseBody(request.body, profileBodySchema);
-      const result = await updateAccount(store, account, body);
-      response.json(result);
+      response.json(await updateAccount(store, account, body));
+    },
+
+    async preferences(request: Request, response: Response) {
+      const account = await requireAccount(request);
+      response.json({ preferences: await store.preferences(account.id) });
+    },
+
+    async updatePreferences(request: Request, response: Response) {
+      const account = await requireAccount(request);
+      response.json(await updatePreferences(store, account, request.body));
     },
 
     async logout(request: Request, response: Response) {
@@ -131,8 +135,7 @@ export function createAuthController(auth: Authentication) {
     },
 
     async changePasswordRoute(request: Request, response: Response) {
-      const account = await auth.authenticate(request);
-      if (!account) throw new ApiError(401, "unauthorized", "A valid session is required.");
+      const account = await requireAccount(request);
       const body = parseBody(request.body, passwordChangeBodySchema);
       await changePassword(store, account, body);
       response.status(204).end();

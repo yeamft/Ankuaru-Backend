@@ -32,5 +32,5 @@ export const telegramImportSchema = z.object({
 });
 
 export const inquiryMessageSchema = z.string().trim().min(1);
-export const inquiryStatusSchema = z.string().trim().pipe(z.enum(["New", "Responded", "Resolved", "Closed"]));
-export const uuidSchema = z.string().regex(/^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i);
+export const INQUIRY_STATUSES = ["New", "Responded", "Resolved", "Closed"] as const;
+export const inquiryStatusSchema = z.string().trim().pipe(z.enum(INQUIRY_STATUSES));

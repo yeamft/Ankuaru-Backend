@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import type { Database } from "../../../infrastructure/database/db.js";
 import { pageRequest, sendPage } from "../../../shared/pagination.js";
 import { hasPermission, type AccessControl, type Guards } from "../../auth/index.js";
-import * as contentInsights from "../../content/services/insights.service.js";
+import { newsStatistics } from "../../content/index.js";
 import * as activity from "../services/activity.service.js";
 import * as interactions from "../services/interactions.service.js";
 import * as admin from "../services/admin.service.js";
@@ -39,7 +39,7 @@ export function createAdminController(database: Database, guards: Guards, access
 
     async newsAnalytics(request: Request, response: Response) {
       await guards.requirePermission(request, response, "console.view");
-      response.json(await contentInsights.newsStatistics(database, request.query as Record<string, unknown>));
+      response.json(await newsStatistics(database, request.query as Record<string, unknown>));
     },
 
     async roles(request: Request, response: Response) {

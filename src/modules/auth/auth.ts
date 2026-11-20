@@ -26,14 +26,9 @@ export class Authentication {
   constructor(
     private readonly store: AuthStore,
     private readonly sessionTtlSeconds = 86400,
+    // The server passes the loaded config; tests rely on the local defaults.
     private readonly phoneOtpConfig: PhoneOtpConfig = {
       environment: process.env.NODE_ENV ?? "development",
-      ...(process.env.PHONE_OTP_SECRET ? { secret: process.env.PHONE_OTP_SECRET } : {}),
-      ...(process.env.SMS_DELIVERY_URL ? { smsUrl: process.env.SMS_DELIVERY_URL } : {}),
-      ...(process.env.SMS_DELIVERY_TOKEN ? { smsToken: process.env.SMS_DELIVERY_TOKEN } : {}),
-      ...(process.env.SMS_SENDER_ID ? { senderId: process.env.SMS_SENDER_ID } : {}),
-      ...(process.env.GEEZ_TOKEN ? { geezToken: process.env.GEEZ_TOKEN } : {}),
-      ...(process.env.GEEZ_SHORTCODE_ID ? { geezShortcodeId: process.env.GEEZ_SHORTCODE_ID } : {}),
     },
     private readonly telegramConfig: TelegramConfig | null = null,
   ) {

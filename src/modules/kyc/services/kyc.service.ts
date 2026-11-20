@@ -3,7 +3,7 @@ import type { Database } from "../../../infrastructure/database/db.js";
 import { transaction } from "../../../infrastructure/database/index.js";
 import { traders, verificationRequests } from "../../../infrastructure/database/schema.js";
 import { ApiError } from "../../../shared/errors.js";
-import { audit } from "../../admin/services/audit.service.js";
+import { audit } from "../../../infrastructure/database/index.js";
 import { kycApplicationSchema } from "../schemas.js";
 
 const applicationProjection = {

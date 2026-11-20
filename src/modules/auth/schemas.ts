@@ -19,6 +19,7 @@ export const displayNameSchema = z.string().trim().min(1).max(100);
 export const citySchema = z.string().trim().min(1).max(100);
 export const phoneInputSchema = z.string().trim().min(7).max(32);
 export const traderRoleSchema = z.enum(["buyer", "seller", "both"]);
+export const TRADER_STATUSES = ["Active", "Pending", "Suspended"] as const;
 
 export const phoneOtpBodySchema = recordObjectSchema(["phone"]);
 export const pinLoginBodySchema = recordObjectSchema(["phone", "pin"]);
@@ -26,5 +27,12 @@ export const pinBodySchema = recordObjectSchema(["pin"]);
 export const phoneOtpConfirmBodySchema = recordObjectSchema(["phone", "phone_otp"]);
 export const loginBodySchema = recordObjectSchema(["email", "password"]);
 export const profileBodySchema = recordObjectSchema(["display_name", "role", "city"]);
+export const preferencesBodySchema = z.object({
+  language: z.enum(["en", "am"]),
+  currency: z.enum(["USD", "ETB"]),
+  notify_inquiries: z.boolean(),
+  notify_listing_updates: z.boolean(),
+  notify_market_news: z.boolean(),
+}).partial().strict();
 export const passwordChangeBodySchema = recordObjectSchema(["current_password", "new_password"]);
 export const bearerHeaderSchema = z.string().regex(/^Bearer ([A-Za-z0-9_-]{43})$/i);

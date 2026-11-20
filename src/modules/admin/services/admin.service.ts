@@ -13,18 +13,22 @@ import {
 } from "../../../infrastructure/database/schema.js";
 import { ApiError } from "../../../shared/errors.js";
 import type { PageRequest } from "../../../shared/pagination.js";
-import { oneOf } from "../../../shared/validation.js";
-import { createListing, INQUIRY_STATUSES, isUuid } from "../../marketplace/index.js";
-import { audit } from "./audit.service.js";
+import { isUuid, oneOf } from "../../../shared/validation.js";
+import {
+  createListing,
+  INQUIRY_STATUSES,
+  isLiveListing,
+  LISTING_STATUSES,
+  LIVE_LISTING_STATUSES,
+} from "../../marketplace/index.js";
+import { TRADER_STATUSES } from "../../auth/index.js";
+import { audit } from "../../../infrastructure/database/index.js";
 import { assertAdminsRemain } from "./users.service.js";
 import { settingValueSchema } from "../schemas.js";
 
-const LISTING_STATUSES = ["Active", "Closing Soon", "Flagged", "Closed", "Rejected", "Pending Review", "Draft"];
-const TRADER_STATUSES = ["Active", "Pending", "Suspended"];
 const SETTING_KEYS = ["marketplace", "notifications"];
 /** Setting fields only a super admin may change: they can take the marketplace offline. */
 const SENSITIVE_SETTING_FIELDS: Record<string, string[]> = { marketplace: ["maintenanceMode"] };
-const liveStatuses = ["Active", "Closing Soon"];
 
 function notFound(code: string, what: string): never {
   throw new ApiError(404, code, `${what} not found.`);
@@ -63,7 +67,7 @@ const listingProjection = {
 export async function overview(database: Database) {
   const result = await database.execute(sql`SELECT
     (SELECT count(*)::int FROM ${traders}) AS traders,
-    (SELECT count(*)::int FROM ${listings} WHERE ${listings.status} IN ('Active', 'Closing Soon')) AS active_listings,
+    (SELECT count(*)::int FROM ${listings} WHERE ${isLiveListing}) AS active_listings,
     (SELECT count(*)::int FROM ${listings} WHERE ${listings.status} = 'Pending Review') AS pending_review,
     (SELECT count(*)::int FROM ${listings} WHERE ${listings.status} = 'Pending Review' AND ${listings.intent} = 'sell') AS pending_offers,
     (SELECT count(*)::int FROM ${listings} WHERE ${listings.status} = 'Pending Review' AND ${listings.intent} = 'buy') AS pending_inquiries,
@@ -129,7 +133,7 @@ export async function setListingFeatured(database: Database, adminId: string, li
     const [current] = await tx.select({ status: listings.status }).from(listings)
       .where(eq(listings.id, listingId)).for("update");
     if (!current) notFound("listing_not_found", "Listing");
-    if (featured && !liveStatuses.includes(current.status))
+    if (featured && !LIVE_LISTING_STATUSES.includes(current.status))
       throw new ApiError(409, "listing_not_live", "Only live listings can be featured.");
     const [row] = await tx.update(listings)
       .set({ featured, featuredAt: featured ? new Date() : null })
@@ -251,7 +255,7 @@ export async function rejectListing(database: Database, adminId: string, listing
 const traderStats = databaseTraderStats();
 function databaseTraderStats() {
   return {
-    active_listings: sql<number>`count(${listings.id}) filter (where ${listings.status} in ('Active', 'Closing Soon'))::int`,
+    active_listings: sql<number>`count(${listings.id}) filter (where ${isLiveListing})::int`,
     last_active: sql<Date>`greatest(${traders.updatedAt}, coalesce(max(${listings.createdAt}), ${traders.updatedAt}))`,
   };
 }

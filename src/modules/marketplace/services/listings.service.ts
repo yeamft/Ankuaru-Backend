@@ -10,6 +10,7 @@ import {
 import { ApiError } from "../../../shared/errors.js";
 import type { PageRequest } from "../../../shared/pagination.js";
 import { resolveProduct } from "../../catalog/index.js";
+import { isLiveListing, LISTING_STATUSES } from "../records.js";
 import { parseTelegramListing } from "./telegram-parser.js";
 import {
   calendarDateSchema,
@@ -123,7 +124,7 @@ export async function listLiveListings(
         filters.intent ? eq(listings.intent, filters.intent) : undefined,
         filters.category ? eq(listings.category, filters.category) : undefined,
         filters.search ? searchCondition(filters.search) : undefined,
-        sql`${listings.status} in ('Active', 'Closing Soon')`,
+        isLiveListing,
         eq(traders.status, "Active"),
         or(
           and(eq(traders.verified, true), eq(traders.phoneVerified, true)),
@@ -158,7 +159,7 @@ export async function findLiveListing(database: Database, listingId: string) {
     .where(
       and(
         eq(listings.id, listingId),
-        sql`${listings.status} in ('Active', 'Closing Soon')`,
+        isLiveListing,
         eq(traders.status, "Active"),
         or(
           and(eq(traders.verified, true), eq(traders.phoneVerified, true)),
@@ -286,7 +287,8 @@ export async function createListing(
 }
 
 /** Statuses an owner can still edit; closed and expired listings are final. */
-const EDITABLE_STATUSES = ["Draft", "Pending Review", "Rejected", "Active", "Closing Soon", "Flagged"];
+/** Every status but Closed: an owner can still edit (and resubmit) the listing. */
+const EDITABLE_STATUSES: readonly string[] = LISTING_STATUSES.filter((status) => status !== "Closed");
 
 /**
  * Replaces a listing's details. Any change to a submitted listing goes back to

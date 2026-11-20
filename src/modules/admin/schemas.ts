@@ -1,12 +1,14 @@
 import { z } from "zod";
-import { ACCOUNT_ROLES, STAFF_ROLES } from "../auth/permissions.js";
 import {
+  ACCOUNT_ROLES,
+  STAFF_ROLES,
   citySchema,
   displayNameSchema,
   emailSchema,
   phoneInputSchema,
   traderRoleSchema,
-} from "../auth/schemas.js";
+  TRADER_STATUSES,
+} from "../auth/index.js";
 
 export const userFiltersSchema = z.object({
   q: z.string().trim().max(200).optional(),
@@ -18,7 +20,7 @@ export const userFiltersSchema = z.object({
   status: z
     .string()
     .trim()
-    .pipe(z.enum(["Active", "Pending", "Suspended"]))
+    .pipe(z.enum(TRADER_STATUSES))
     .optional(),
   profile: z.string().trim().pipe(z.literal("unclaimed")).optional(),
 });

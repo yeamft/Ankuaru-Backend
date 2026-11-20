@@ -15,7 +15,7 @@ import {
   type AccessControl,
   type Permission,
 } from "../../auth/index.js";
-import { audit } from "./audit.service.js";
+import { audit } from "../../../infrastructure/database/index.js";
 
 /** Every staff role with its permissions and member count, plus the permission catalog. */
 export async function listRoles(database: Database, access: AccessControl) {

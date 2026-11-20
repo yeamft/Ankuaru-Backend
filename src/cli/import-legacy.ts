@@ -3,7 +3,7 @@ import { loadConfig } from "../config/env.js";
 import { createDatabase, createPool, migrate } from "../infrastructure/database/index.js";
 import { describeLegacySync, legacySyncOptions, runLegacySync } from "../modules/legacy/sync.js";
 
-// One manual pass. The API server also runs this on an interval (LEGACY_SYNC_INTERVAL_MINUTES).
+// One manual pass. The API server also runs this daily at LEGACY_SYNC_TIME (Ethiopian time).
 // Pass --recheck-news to re-read every post since the cutoff and refresh its tender/event/news kind.
 const options = legacySyncOptions();
 const pool = createPool(loadConfig().databaseUrl, 2);
