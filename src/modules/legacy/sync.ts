@@ -4,6 +4,7 @@ import { legacyNewsImports } from "../../infrastructure/database/schema.js";
 import { importLegacyData, importLegacyNews } from "./import.js";
 import { DEFAULT_SINCE, fetchLegacyData, fetchLegacyNews } from "./source.js";
 import { DEFAULT_CONTENT_SINCE, fetchLegacyContent } from "./content-source.js";
+import { fetchLegacyResources, importLegacyResources } from "./resource-source.js";
 import { syncBankForex } from "../catalog/services/forex.service.js";
 
 export const DEFAULT_LEGACY_API = "https://backend.ankuaru.com/api";
@@ -16,6 +17,8 @@ export type LegacySyncOptions = {
   newsSince: string;
   contentSince?: string;
   listings: boolean;
+  /** Staff token required by the legacy resource feed. */
+  token?: string;
 };
 
 export function legacySyncOptions(environment = process.env): LegacySyncOptions {
@@ -26,6 +29,7 @@ export function legacySyncOptions(environment = process.env): LegacySyncOptions 
     newsSince: environment.LEGACY_NEWS_SINCE ?? since,
     contentSince: environment.LEGACY_CONTENT_SINCE ?? DEFAULT_CONTENT_SINCE,
     listings: environment.LEGACY_SKIP_LISTINGS !== "1",
+    token: environment.LEGACY_API_TOKEN?.trim() || undefined,
   };
 }
 
@@ -36,13 +40,14 @@ export type LegacySyncResult = {
   tender?: Awaited<ReturnType<typeof importLegacyNews>>;
   event?: Awaited<ReturnType<typeof importLegacyNews>>;
   forex?: Awaited<ReturnType<typeof syncBankForex>>;
+  resources?: Awaited<ReturnType<typeof importLegacyResources>> & { skipped: number };
   errors: string[];
 };
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
- * Independent feeds: news, typed tenders/events, bank rates, then listings.
+ * Independent feeds: news, typed tenders/events, resources, bank rates, then listings.
  * Each failure is isolated so other feeds still run and failures retry next pass.
  */
 export async function runLegacySync(
@@ -72,6 +77,12 @@ export async function runLegacySync(
     }
   }
   try {
+    const fetched = await fetchLegacyResources(options.baseUrl, options.token, fetcher);
+    result.resources = { ...await importLegacyResources(database, fetched.resources), skipped: fetched.skipped };
+  } catch (error) {
+    result.errors.push(`resources: ${message(error)}`);
+  }
+  try {
     result.forex = await syncBankForex(database, options.baseUrl, fetcher);
   } catch (error) {
     result.errors.push(`forex: ${message(error)}`);
@@ -95,6 +106,10 @@ export function describeLegacySync(result: LegacySyncResult): string {
   if (result.posts) parts.push(`${result.posts.newsInserted} news posts added, ${result.posts.newsUpdated} updated`);
   if (result.tender) parts.push(`${result.tender.newsInserted} tenders added, ${result.tender.newsUpdated} updated`);
   if (result.event) parts.push(`${result.event.newsInserted} events added, ${result.event.newsUpdated} updated`);
+  if (result.resources) {
+    parts.push(`${result.resources.resourcesInserted} resources added, ${result.resources.resourcesUpdated} updated` +
+      (result.resources.skipped ? `, ${result.resources.skipped} incomplete skipped` : ""));
+  }
   if (result.forex) parts.push(`${result.forex.snapshots} bank rate snapshots synced`);
   if (result.listings) {
     parts.push(

@@ -16,6 +16,7 @@
     "interactions:seed-sample": "tsx src/cli/seed-sample-interactions.ts",
     "staff:seed": "tsx src/cli/seed-staff.ts",
     "legacy:import": "tsx src/cli/import-legacy.ts",
+    "legacy:resources": "tsx src/cli/import-legacy-resources.ts",
     "db:generate": "drizzle-kit generate",
     "test": "npm run build && node --test test/*.test.mjs"
   },

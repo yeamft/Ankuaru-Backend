@@ -279,8 +279,9 @@ export async function createListing(
     reference: `ANK-IOI-${year}-${suffix}`,
     ...fields,
     ...product,
-    // Unverified traders save a draft; verified traders submit it for approval.
-    status: owner.ready ? await submittedStatus(database) : "Draft",
+    // Unverified traders save a draft; verified traders submit it for approval
+    // unless they ask for a draft (`draft: true`), e.g. a listing written before signing in.
+    status: owner.ready && body.draft !== true ? await submittedStatus(database) : "Draft",
   });
   // Only Active listings of verified owners reach the public feed.
   return findListing(database, id);

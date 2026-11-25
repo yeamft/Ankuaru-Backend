@@ -321,7 +321,13 @@ export function httpsGet(base: URL, request: typeof fetch) {
   }
   // Injected fetchers (tests) are not real network calls, so they are not paced.
   const paced = request === globalThis.fetch;
-  return async function get(path: string, origin = base, init: RequestInit = {}): Promise<unknown> {
+  return async function get(
+    path: string,
+    origin = base,
+    init: RequestInit = {},
+    /** Value returned for a 404 "No ... found" answer, which the legacy API uses for an empty list. */
+    emptyOn404?: unknown,
+  ): Promise<unknown> {
     const url = new URL(path, origin);
     for (let attempt = 0; ; attempt++) {
       let pause: number | null = null;
@@ -329,6 +335,10 @@ export function httpsGet(base: URL, request: typeof fetch) {
         if (paced) await paceRequest(url.host);
         const response = await request(url, { ...init, signal: AbortSignal.timeout(30_000), redirect: "error" });
         if (response.ok) return await response.json();
+        if (response.status === 404 && emptyOn404 !== undefined) {
+          const body = await response.json().catch(() => null) as { message?: unknown } | null;
+          if (typeof body?.message === "string" && /^no .*found/i.test(body.message)) return emptyOn404;
+        }
         // 4xx (other than "slow down") will not get better by asking again.
         if (response.status >= 400 && response.status < 500 && response.status !== 429) {
           throw new ClientError(`HTTP ${response.status}`);

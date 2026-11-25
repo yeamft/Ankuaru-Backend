@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { boolean, index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import { newsPosts } from "./admin.js";
+import { newsPosts, resources } from "./admin.js";
 import { traders } from "./identity.js";
 import { listings } from "./marketplace.js";
 
@@ -31,6 +31,13 @@ export const legacyListingImports = pgTable("legacy_listing_imports", {
 export const legacyNewsImports = pgTable("legacy_news_imports", {
   sourceId: text("source_id").primaryKey(),
   newsPostId: uuid("news_post_id").unique().references(() => newsPosts.id, { onDelete: "set null" }),
+  snapshot: jsonb("snapshot").notNull(),
+  importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const legacyResourceImports = pgTable("legacy_resource_imports", {
+  sourceId: text("source_id").primaryKey(),
+  resourceId: uuid("resource_id").unique().references(() => resources.id, { onDelete: "set null" }),
   snapshot: jsonb("snapshot").notNull(),
   importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
 });

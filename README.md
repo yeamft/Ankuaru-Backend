@@ -151,6 +151,16 @@ Each pass also checks existing posts for added, replaced, or removed images.
 An image follows the source only while it still matches its last imported value;
 local image edits, other content edits, and deletions are preserved.
 
+Resources (guides, reports, regulations and videos) are read from
+`POST Admin/fetchallresource` with `is_posted: true`, following every page. This
+endpoint requires a legacy staff token: set `LEGACY_API_TOKEN` in `backend/.env`.
+The public `Admin/fetchAllPost` endpoint does not return resource posts.
+Run `npm run legacy:resources` to import only resources, or include them in the
+regular sync. Missing credentials are reported as a resource import error;
+other feeds continue. New resources are published under the `legacy-resources` importer and
+tracked in `legacy_resource_imports`; a source change is copied only onto a
+resource staff have not edited, and a resource deleted here is not re-imported.
+
 Bank buying/selling rates are synchronized from `Admin/getAllExchangeRates` into
 `bank_forex_snapshots`, including corrections to previously published snapshots.
 `GET /api/catalog/forex/latest` serves the newest snapshot publicly; failed syncs
@@ -158,7 +168,7 @@ retain the last successful data. The website's **Daily Banks’ Forex Rates** se
 shows USD/ETB buying and selling rates by bank with the original publication date,
 bank search, and refresh. Older snapshots are labelled as latest available, never
 as today's rates. This is separate from the existing NBE indicative-rate sync.
-News, tenders, events, forex and listings fail independently; each retries on the
+News, tenders, events, resources, forex and listings fail independently; each retries on the
 next interval. The web tender/event feeds and forex section refresh every five
 minutes while open. No separate scheduler is required while the API is running.
 
