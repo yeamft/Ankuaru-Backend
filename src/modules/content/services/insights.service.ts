@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Database } from "../../../infrastructure/database/db.js";
 import { transaction } from "../../../infrastructure/database/index.js";
@@ -134,11 +134,25 @@ function parseResource(body: unknown) {
 }
 
 /** Every resource for staff; only published ones for traders. */
+/** The public Resources page shows the past three months; staff see everything. */
+export const PUBLIC_RESOURCE_MONTHS = 3;
+
+/** The start of the public window: this date and time, PUBLIC_RESOURCE_MONTHS months ago. */
+export function publicResourcesSince(now = new Date()) {
+  const since = new Date(now);
+  since.setUTCMonth(since.getUTCMonth() - PUBLIC_RESOURCE_MONTHS);
+  return since;
+}
+
 export async function listResources(database: Database, { staff = false } = {}) {
   const rows = await database
     .select()
     .from(resources)
-    .where(staff ? undefined : eq(resources.status, "Published"))
+    .where(
+      staff
+        ? undefined
+        : and(eq(resources.status, "Published"), gte(resources.createdAt, publicResourcesSince())),
+    )
     .orderBy(desc(resources.createdAt));
   return rows.map(toResource);
 }

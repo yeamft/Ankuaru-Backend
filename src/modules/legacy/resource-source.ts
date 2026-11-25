@@ -62,20 +62,39 @@ function resourceType(label: string, link: string): ResourceType {
   if (/video/i.test(label) || /youtube\.com|youtu\.be|vimeo\.com|\.mp4($|\?)/i.test(link)) return "Video";
   if (/regulat|directive|proclamation|law|polic|ደንብ|መመሪያ|አዋጅ/i.test(label)) return "Regulation";
   if (/report|study|analysis|research|ሪፖርት/i.test(label)) return "Report";
+  // Price sheets and data files (e.g. ECA's weekly coffee price comparison .xlsx) are reports.
+  if (/price|ዋጋ|data|statistic/i.test(label) || /\.(xlsx?|csv)($|\?)/i.test(link)) return "Report";
   return "Guide";
 }
 
-/** The first link block's URL; the legacy editor stores it as a string or `{ url, displayText }`. */
+/** Body blocks that carry the resource's download or destination. */
+const LINK_BLOCKS = new Set(["file", "document", "attachment", "link"]);
+
+/**
+ * The resource's link from its body blocks: a file / document / attachment block
+ * (e.g. `{ "type": "file", "url": "…/Coffee_Price.xlsx", "name": "" }`) first,
+ * then a link block (stored as a string or `{ url, displayText }`). Images are not links.
+ */
 function blockLink(body: string): string | null {
   let blocks: unknown;
   try { blocks = JSON.parse(body); } catch { return null; }
   if (!Array.isArray(blocks)) return null;
+  const urlOf = (block: { url?: unknown }) => {
+    const url = typeof block.url === "string" ? block.url : (block.url as { url?: unknown } | undefined)?.url;
+    return typeof url === "string" ? httpUrl(url) : null;
+  };
+  let link: string | null = null;
   for (const block of blocks) {
-    if (!block || typeof block !== "object" || block.type !== "link") continue;
-    const url = typeof block.url === "string" ? block.url : block.url?.url;
-    if (typeof url === "string" && httpUrl(url)) return url;
+    if (!block || typeof block !== "object") continue;
+    const type = typeof block.type === "string" ? block.type.toLowerCase() : "";
+    if (type && !LINK_BLOCKS.has(type)) continue;
+    const url = urlOf(block);
+    if (!url) continue;
+    // A file beats a plain link; an untyped block with a URL counts as a file.
+    if (type !== "link") return url;
+    link ??= url;
   }
-  return null;
+  return link;
 }
 
 /** Maps one source row; null for rows too incomplete for the resources table. */
@@ -89,7 +108,7 @@ export function presentResource(value: unknown): LegacyResource | null {
   const source = row.body ?? row.content ?? row.description ?? row.summary ?? "";
   const content = parseLegacyContentBody(source);
   const link = [row.url, row.link, row.fileUrl, row.file_url, row.file, row.documentUrl, row.videoUrl,
-    content.linkUrl, blockLink(source)].map(httpUrl).find(Boolean) ?? "";
+    blockLink(source), content.linkUrl].map(httpUrl).find(Boolean) ?? "";
   const label = [row.type, row.resourceType, row.resource_type, row.category, title].filter(Boolean).join(" ");
   const type = resourceType(label, link);
   if (type === "Video" && !link) return null;
@@ -145,11 +164,25 @@ type Snapshot = Pick<LegacyResource, "title" | "type" | "summary" | "body" | "li
 const snapshotOf = ({ title, type, summary, body, link }: Snapshot): Snapshot => ({ title, type, summary, body, link });
 const same = (a: Snapshot, b: Snapshot) => JSON.stringify(snapshotOf(a)) === JSON.stringify(snapshotOf(b));
 
+/** New legacy resources are only added when published in the past this many months. */
+export const RESOURCE_IMPORT_MONTHS = 3;
+
+function importWindowStart(now = new Date()) {
+  const since = new Date(now);
+  since.setUTCMonth(since.getUTCMonth() - RESOURCE_IMPORT_MONTHS);
+  return since;
+}
+
 /**
- * Adds new legacy resources as published, and copies source changes onto ones staff
- * have not edited since the last import. A resource deleted locally stays deleted.
+ * Adds new legacy resources from the past RESOURCE_IMPORT_MONTHS months as published,
+ * and copies source changes onto ones staff have not edited since the last import.
+ * A resource deleted locally stays deleted.
  */
-export async function importLegacyResources(database: Database, items: LegacyResource[]) {
+export async function importLegacyResources(
+  database: Database,
+  items: LegacyResource[],
+  since = importWindowStart(),
+) {
   return transaction(database, async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('legacy-ankuaru-resource-import'))`);
     const imported = items.length
@@ -164,8 +197,13 @@ export async function importLegacyResources(database: Database, items: LegacyRes
 
     let inserted = 0;
     let updated = 0;
+    let older = 0;
     for (const item of items) {
       const previous = bySource.get(item.id);
+      if (!previous && item.createdAt && new Date(item.createdAt) < since) {
+        older++;
+        continue;
+      }
       if (!previous) {
         const createdAt = item.createdAt ? new Date(item.createdAt) : new Date();
         const [row] = await tx.insert(resources).values({
@@ -187,6 +225,6 @@ export async function importLegacyResources(database: Database, items: LegacyRes
         .where(eq(legacyResourceImports.sourceId, item.id));
       updated++;
     }
-    return { resourcesInserted: inserted, resourcesUpdated: updated };
+    return { resourcesInserted: inserted, resourcesUpdated: updated, resourcesOlderSkipped: older };
   });
 }
